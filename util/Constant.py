@@ -8,11 +8,11 @@ DEFAULT_RATE_LIMIT_DELAY_MS = 100
 
 # === 自适应限速引擎 ===
 # 429 指数退避基数 (ms)，retry 1: min, retry 2: min*2 … capped at max
-RATE_LIMIT_BACKOFF_BASE_MS = 1000       # 首次等待 1s
-RATE_LIMIT_BACKOFF_MAX_MS = 30000       # 上限 30s
+RATE_LIMIT_BACKOFF_BASE_MS = 1000  # 首次等待 1s
+RATE_LIMIT_BACKOFF_MAX_MS = 30000  # 上限 30s
 
 # 请求间隔随机抖动比例 (±jitter_ratio 范围均匀随机)
-REQUEST_JITTER_RATIO = 0.3              # ±30%
+REQUEST_JITTER_RATIO = 0.3  # ±30%
 
 # 1 秒盾对齐：同一账号同场次 create 最小间隔 (ms)
 MIN_CREATE_INTERVAL_MS = 1000

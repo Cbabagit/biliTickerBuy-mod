@@ -32,6 +32,7 @@ DEFAULT_INSTANCE_COUNT = 5
 #  通用 API
 # ═══════════════════════════════════════════════
 
+
 def _headers() -> dict[str, str]:
     secret = ConfigDB.get(CFG_API_SECRET) or DEFAULT_SECRET
     return {"Authorization": f"Bearer {secret}", "Content-Type": "application/json"}
@@ -63,6 +64,7 @@ def _req(method: str, path: str, body: Any = None) -> Any:
 #  主实例 API
 # ═══════════════════════════════════════════════
 
+
 def test_connection() -> tuple[bool, str]:
     data = _req("GET", "/version")
     if data and "version" in data:
@@ -77,11 +79,14 @@ def get_proxy_groups() -> list[dict]:
     groups = []
     for name, proxy in data.get("proxies", {}).items():
         if proxy.get("type") in ("Selector", "URLTest", "Fallback"):
-            groups.append({
-                "name": name, "type": proxy["type"],
-                "now": proxy.get("now", ""),
-                "all": proxy.get("all", []),
-            })
+            groups.append(
+                {
+                    "name": name,
+                    "type": proxy["type"],
+                    "now": proxy.get("now", ""),
+                    "all": proxy.get("all", []),
+                }
+            )
     return groups
 
 
@@ -89,9 +94,21 @@ def get_proxies() -> dict[str, dict]:
     data = _req("GET", "/proxies")
     if not data:
         return {}
-    skip_types = {"Selector", "URLTest", "Fallback", "Direct", "Reject",
-                   "RejectDrop", "Compatible", "Pass"}
-    return {n: p for n, p in data.get("proxies", {}).items() if p.get("type") not in skip_types}
+    skip_types = {
+        "Selector",
+        "URLTest",
+        "Fallback",
+        "Direct",
+        "Reject",
+        "RejectDrop",
+        "Compatible",
+        "Pass",
+    }
+    return {
+        n: p
+        for n, p in data.get("proxies", {}).items()
+        if p.get("type") not in skip_types
+    }
 
 
 def switch_node(group: str, node: str) -> tuple[bool, str]:
@@ -128,10 +145,11 @@ def get_best_node(group: str) -> str | None:
 
 
 def _shorten(s: str, maxlen: int = 22) -> str:
-    return s if len(s) <= maxlen else s[:maxlen - 2] + ".."
+    return s if len(s) <= maxlen else s[: maxlen - 2] + ".."
 
 
 # ── 节点延迟查询 ──
+
 
 def _extract_region(node: str) -> str:
     regions = [
@@ -182,6 +200,7 @@ def get_nodes_with_delay(group: str, live_test: bool = False) -> list[dict]:
         # 实时探测延迟
         try:
             from util.proxy.ClashSwitcher import test_all_delays
+
             delays = test_all_delays(0, group, timeout=5000)
         except ImportError:
             delays = None
@@ -215,12 +234,14 @@ def get_nodes_with_delay(group: str, live_test: bool = False) -> list[dict]:
                     delay = int(hist[-1]["delay"])
             except (IndexError, KeyError, ValueError, TypeError):
                 pass
-        results.append({
-            "name": node,
-            "region": _extract_region(node),
-            "delay": delay,
-            "alive": alive,
-        })
+        results.append(
+            {
+                "name": node,
+                "region": _extract_region(node),
+                "delay": delay,
+                "alive": alive,
+            }
+        )
 
     # 按延迟排序 (alive 优先)
     results.sort(key=lambda r: (0 if r["alive"] else 1, r["delay"]))
@@ -237,11 +258,15 @@ def build_latency_table(group: str, live_test: bool = False) -> str:
     for i, n in enumerate(nodes):
         alive_icon = "🟢" if n["alive"] else "🔴"
         delay_str = f"{n['delay']}ms" if n["delay"] < 9999 else "—"
-        delay_class = "latency-ok" if n["alive"] and n["delay"] < 300 else ("latency-slow" if n["alive"] else "latency-dead")
+        delay_class = (
+            "latency-ok"
+            if n["alive"] and n["delay"] < 300
+            else ("latency-slow" if n["alive"] else "latency-dead")
+        )
 
         rows.append(
             f"<tr>"
-            f"<td style='text-align:center;width:40px;'>{i+1}</td>"
+            f"<td style='text-align:center;width:40px;'>{i + 1}</td>"
             f"<td style='text-align:center;width:40px;'>{n['region']}</td>"
             f"<td style='max-width:250px;overflow:hidden;text-overflow:ellipsis;'>{n['name']}</td>"
             f"<td style='text-align:center;width:80px;'>{alive_icon}</td>"
@@ -276,6 +301,7 @@ def build_latency_table(group: str, live_test: bool = False) -> str:
 #  子实例管理
 # ═══════════════════════════════════════════════
 
+
 def _importer():
     from util.proxy.ClashInstanceManager import (
         INSTANCE_COUNT,
@@ -287,11 +313,26 @@ def _importer():
         add_instance as _add_instance,
         remove_instance as _remove_instance,
     )
-    return INSTANCE_COUNT, ensure_all, stop_all, get_instance_statuses, get_assignments, _force_select_node, _add_instance, _remove_instance
+
+    return (
+        INSTANCE_COUNT,
+        ensure_all,
+        stop_all,
+        get_instance_statuses,
+        get_assignments,
+        _force_select_node,
+        _add_instance,
+        _remove_instance,
+    )
 
 
 def _switcher():
-    from util.proxy.ClashSwitcher import is_api_available, get_status_text, _get_other_instances_current_node
+    from util.proxy.ClashSwitcher import (
+        is_api_available,
+        get_status_text,
+        _get_other_instances_current_node,
+    )
+
     return is_api_available, get_status_text, _get_other_instances_current_node
 
 
@@ -350,10 +391,12 @@ def switch_instance_node(instance_id: int, node_name: str) -> str:
         return "❌ 模块未加载"
     try:
         from util.proxy.ClashInstanceManager import get_proxy_group
+
         grp, _ = get_proxy_group(instance_id)
         if not grp:
             return f"❌ 实例 {instance_id} 无可用组"
         from util.proxy.ClashInstanceManager import _force_select_node
+
         ok = _force_select_node(instance_id, node_name)
         return f"✅ 实例 {instance_id} → {node_name}" if ok else "❌ 切换失败"
     except Exception as e:
@@ -413,7 +456,7 @@ def _build_instance_table() -> str:
             f"<td style='max-width:160px;overflow:hidden;text-overflow:ellipsis;'>{assigned}</td>"
             f"<td style='max-width:160px;overflow:hidden;text-overflow:ellipsis;'>{cur_disp}</td>"
             f"<td style='text-align:center;width:70px;'>{delay_str}</td>"
-            f"<td style='width:70px;text-align:center;'>:{17890+iid}</td>"
+            f"<td style='width:70px;text-align:center;'>:{17890 + iid}</td>"
             f"</tr>"
         )
 
@@ -443,10 +486,14 @@ def _req_raw(instance_id: int, method: str, path: str) -> Any:
     secret = ConfigDB.get(CFG_API_SECRET) or DEFAULT_SECRET
     url = f"http://127.0.0.1:{port}{path}"
     try:
-        req = urllib.request.Request(url, method=method, headers={
-            "Authorization": f"Bearer {secret}",
-            "Content-Type": "application/json",
-        })
+        req = urllib.request.Request(
+            url,
+            method=method,
+            headers={
+                "Authorization": f"Bearer {secret}",
+                "Content-Type": "application/json",
+            },
+        )
         with urllib.request.urlopen(req, timeout=3) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
@@ -474,11 +521,17 @@ def get_nodes_for_instance(instance_id: int) -> list:
         return []
     try:
         from util.proxy.ClashInstanceManager import get_proxy_group
+
         grp, nodes = get_proxy_group(instance_id)
         if not grp or not nodes:
             return [("(无节点)", "")]
-        clean = [n for n in nodes
-                 if not any(k in n for k in ["：", "剩余", "到期", "重置", "更新订阅", "重启网络"])]
+        clean = [
+            n
+            for n in nodes
+            if not any(
+                k in n for k in ["：", "剩余", "到期", "重置", "更新订阅", "重启网络"]
+            )
+        ]
         return [(n, n) for n in clean]
     except Exception:
         return [("(错误)", "")]
@@ -487,6 +540,7 @@ def get_nodes_for_instance(instance_id: int) -> list:
 # ═══════════════════════════════════════════════
 #  自动开关 & 状态
 # ═══════════════════════════════════════════════
+
 
 def _get_auto_toggle(key: str) -> bool:
     val = ConfigDB.get(key)
@@ -510,11 +564,15 @@ def toggle_auto_child(enabled: bool) -> str:
 def get_auto_switch_status() -> str:
     lines = []
     try:
-        is_api_available, get_status_text, _get_other_instances_current_node = _switcher()
+        is_api_available, get_status_text, _get_other_instances_current_node = (
+            _switcher()
+        )
         auto_main = _get_auto_toggle(CFG_AUTO_MAIN)
         auto_child = _get_auto_toggle(CFG_AUTO_CHILD)
 
-        lines.append(f"**自动切换**: 主实例 {'🟢 启用' if auto_main else '⚪ 禁用'} · 子实例 {'🟢 启用' if auto_child else '⚪ 禁用'}")
+        lines.append(
+            f"**自动切换**: 主实例 {'🟢 启用' if auto_main else '⚪ 禁用'} · 子实例 {'🟢 启用' if auto_child else '⚪ 禁用'}"
+        )
 
         if not is_api_available(0):
             lines.append("主实例: 🔴 未连接")
@@ -536,7 +594,9 @@ def get_auto_switch_status() -> str:
         lines.append("**跨实例反亲和性** — 切换时自动跳过其他实例正在使用的节点")
         if is_api_available(0):
             used = _get_other_instances_current_node(0)
-            lines.append(f"其他实例当前节点: {', '.join(used) if used else '不在线或无占用'}")
+            lines.append(
+                f"其他实例当前节点: {', '.join(used) if used else '不在线或无占用'}"
+            )
         lines.append("")
         lines.append("**切换规则** 412/403/IP 报错 → 自动切到评分最高且未被占用的节点")
     except ImportError:
@@ -549,6 +609,7 @@ def get_auto_switch_status() -> str:
 # ═══════════════════════════════════════════════
 #  ConfigDB 存取
 # ═══════════════════════════════════════════════
+
 
 def save_config(api_url: str, secret: str) -> str:
     api_url = api_url.rstrip("/")
@@ -568,6 +629,7 @@ def load_config() -> tuple[str, str]:
 #  辅助
 # ═══════════════════════════════════════════════
 
+
 def _build_group_tags(groups: list[dict]) -> str:
     if not groups:
         return '<span class="btb-card-note">无法获取代理组</span>'
@@ -577,10 +639,10 @@ def _build_group_tags(groups: list[dict]) -> str:
         icon = icons.get(g["type"], "📦")
         tags.append(
             f'<span style="display:inline-block;padding:4px 10px;margin:3px;'
-            f'background:var(--button-secondary-background-fill,#e5e7eb);'
+            f"background:var(--button-secondary-background-fill,#e5e7eb);"
             f'border-radius:999px;font-size:13px;">'
-            f'{icon} {g["name"]} <b>{g["now"]}</b>'
-            f'</span>'
+            f"{icon} {g['name']} <b>{g['now']}</b>"
+            f"</span>"
         )
     return "".join(tags)
 
@@ -613,7 +675,10 @@ def _discover_quick_nodes(group: str) -> list:
     ]
     for label, keywords in regions:
         matched = [n for n in real_nodes if any(k in n for k in keywords)]
-        picked = next((m for m in matched if proxies.get(m, {}).get("alive")), matched[0] if matched else None)
+        picked = next(
+            (m for m in matched if proxies.get(m, {}).get("alive")),
+            matched[0] if matched else None,
+        )
         if picked:
             quick.append((f"{label} → {_shorten(picked, 16)}", picked))
     return quick
@@ -623,6 +688,7 @@ def _discover_quick_nodes(group: str) -> list:
 #  Tab 构建
 # ═══════════════════════════════════════════════
 
+
 def clash_tab():
     defaults = load_config()
     saved_count = ConfigDB.get_as_int(CFG_INSTANCE_COUNT, DEFAULT_INSTANCE_COUNT)
@@ -630,7 +696,6 @@ def clash_tab():
     auto_child_default = _get_auto_toggle(CFG_AUTO_CHILD)
 
     with gr.Column(elem_classes="btb-page-section"):
-
         # ════════════ 1. 配置面板 ════════════
         with gr.Column(elem_classes="btb-card btb-layout-card"):
             gr.HTML(
@@ -638,17 +703,28 @@ def clash_tab():
             )
             with gr.Row():
                 api_url = gr.Textbox(
-                    label="API 地址", value=defaults[0],
-                    placeholder="http://127.0.0.1:9097", scale=3,
+                    label="API 地址",
+                    value=defaults[0],
+                    placeholder="http://127.0.0.1:9097",
+                    scale=3,
                 )
                 api_secret = gr.Textbox(
-                    label="密钥", value=defaults[1],
-                    placeholder="set-your-secret", type="password", scale=2,
+                    label="密钥",
+                    value=defaults[1],
+                    placeholder="set-your-secret",
+                    type="password",
+                    scale=2,
                 )
             with gr.Row(elem_classes="btb-inline-actions !justify-start"):
-                connect_btn = gr.Button("🔌 连接测试", variant="primary", scale=0, min_width=140)
-                save_btn = gr.Button("💾 保存", variant="secondary", scale=0, min_width=100)
-                connection_status = gr.Textbox(label="", value="", interactive=False, scale=3)
+                connect_btn = gr.Button(
+                    "🔌 连接测试", variant="primary", scale=0, min_width=140
+                )
+                save_btn = gr.Button(
+                    "💾 保存", variant="secondary", scale=0, min_width=100
+                )
+                connection_status = gr.Textbox(
+                    label="", value="", interactive=False, scale=3
+                )
 
         # ════════════ 2. 节点延迟仪表盘 ════════════
         with gr.Column(elem_classes="btb-card btb-layout-card"):
@@ -658,9 +734,14 @@ def clash_tab():
             )
             with gr.Row():
                 latency_group = gr.Dropdown(
-                    label="代理组", choices=[], interactive=True, scale=3,
+                    label="代理组",
+                    choices=[],
+                    interactive=True,
+                    scale=3,
                 )
-                refresh_latency_btn = gr.Button("🔄 刷新延迟", variant="secondary", scale=0, min_width=120)
+                refresh_latency_btn = gr.Button(
+                    "🔄 刷新延迟", variant="secondary", scale=0, min_width=120
+                )
                 gr.Checkbox(label="自动刷新", value=False, scale=0, min_width=100)
             latency_table = gr.HTML(
                 '<span class="btb-card-note">点击「连接测试」后选择组查看延迟</span>',
@@ -676,25 +757,38 @@ def clash_tab():
             # 自动切换开关
             with gr.Row():
                 auto_main_toggle = gr.Checkbox(
-                    label="⚡ 自动切换节点", value=auto_main_default,
+                    label="⚡ 自动切换节点",
+                    value=auto_main_default,
                     info="失败时自动切换到评分最高的节点",
                     scale=1,
                 )
-                auto_main_status = gr.Textbox(label="", value="", interactive=False, scale=2)
+                auto_main_status = gr.Textbox(
+                    label="", value="", interactive=False, scale=2
+                )
 
             with gr.Row():
                 group_dropdown = gr.Dropdown(
-                    label="代理组", choices=[], interactive=True, scale=3,
+                    label="代理组",
+                    choices=[],
+                    interactive=True,
+                    scale=3,
                 )
-                refresh_groups_btn = gr.Button("🔄 刷新组", variant="secondary", scale=0, min_width=100)
+                refresh_groups_btn = gr.Button(
+                    "🔄 刷新组", variant="secondary", scale=0, min_width=100
+                )
             groups_tags = gr.HTML("点击「连接测试」查看代理组")
 
             with gr.Row():
                 quick_dropdown = gr.Dropdown(
-                    label="快捷切换", choices=[], interactive=True,
-                    allow_custom_value=True, scale=3,
+                    label="快捷切换",
+                    choices=[],
+                    interactive=True,
+                    allow_custom_value=True,
+                    scale=3,
                 )
-                best_btn = gr.Button("⚡ 最佳延迟", variant="primary", scale=0, min_width=120)
+                best_btn = gr.Button(
+                    "⚡ 最佳延迟", variant="primary", scale=0, min_width=120
+                )
             switch_result = gr.Textbox(label="", value="", interactive=False)
 
         # ════════════ 4. 多实例管理 ════════════
@@ -707,25 +801,42 @@ def clash_tab():
             # 自动切换开关（子实例全局）
             with gr.Row():
                 auto_child_toggle = gr.Checkbox(
-                    label="⚡ 子实例自动切换", value=auto_child_default,
+                    label="⚡ 子实例自动切换",
+                    value=auto_child_default,
                     info="子实例失败时自动切换到未被占用的最优节点",
                     scale=1,
                 )
-                auto_child_status = gr.Textbox(label="", value="", interactive=False, scale=2)
+                auto_child_status = gr.Textbox(
+                    label="", value="", interactive=False, scale=2
+                )
 
             with gr.Row():
                 instance_count = gr.Number(
-                    label="实例数量", value=saved_count,
-                    minimum=1, maximum=10, step=1,
-                    precision=0, scale=1,
+                    label="实例数量",
+                    value=saved_count,
+                    minimum=1,
+                    maximum=10,
+                    step=1,
+                    precision=0,
+                    scale=1,
                 )
                 with gr.Row(scale=3, elem_classes="btb-inline-actions !justify-start"):
-                    auto_start_btn = gr.Button("🚀 一键启动", variant="primary", scale=0, min_width=120)
-                    stop_all_btn = gr.Button("🛑 全部停止", variant="secondary", scale=0, min_width=100)
-                    refresh_inst_btn = gr.Button("🔄 刷新", variant="secondary", scale=0, min_width=80)
-                    add_one_btn = gr.Button("➕ 新增", variant="secondary", scale=0, min_width=80)
+                    auto_start_btn = gr.Button(
+                        "🚀 一键启动", variant="primary", scale=0, min_width=120
+                    )
+                    stop_all_btn = gr.Button(
+                        "🛑 全部停止", variant="secondary", scale=0, min_width=100
+                    )
+                    refresh_inst_btn = gr.Button(
+                        "🔄 刷新", variant="secondary", scale=0, min_width=80
+                    )
+                    add_one_btn = gr.Button(
+                        "➕ 新增", variant="secondary", scale=0, min_width=80
+                    )
 
-            inst_result = gr.Textbox(label="", value="", interactive=False, visible=True)
+            inst_result = gr.Textbox(
+                label="", value="", interactive=False, visible=True
+            )
             inst_table = gr.HTML(
                 '<span class="btb-card-note">点击「一键启动」查看子实例状态</span>',
                 elem_id="btb-instance-table",
@@ -739,13 +850,21 @@ def clash_tab():
                 )
                 with gr.Row():
                     instance_sel = gr.Dropdown(
-                        label="选择实例", choices=[], interactive=True,
-                        allow_custom_value=True, scale=2,
+                        label="选择实例",
+                        choices=[],
+                        interactive=True,
+                        allow_custom_value=True,
+                        scale=2,
                     )
                     node_sel = gr.Dropdown(
-                        label="目标节点", choices=[], interactive=True, scale=3,
+                        label="目标节点",
+                        choices=[],
+                        interactive=True,
+                        scale=3,
                     )
-                    switch_inst_btn = gr.Button("🔄 切换", variant="secondary", scale=0, min_width=80)
+                    switch_inst_btn = gr.Button(
+                        "🔄 切换", variant="secondary", scale=0, min_width=80
+                    )
                 inst_switch_result = gr.Textbox(label="", value="", interactive=False)
 
         # ════════════ 5. 自动切换监控 ════════════
@@ -754,7 +873,9 @@ def clash_tab():
                 """<div class="btb-card-head"><div><h3>⚡ 自动切换状态</h3></div></div>"""
             )
             with gr.Row(elem_classes="btb-inline-actions !justify-start"):
-                refresh_auto_btn = gr.Button("🔄 刷新状态", variant="secondary", scale=0, min_width=120)
+                refresh_auto_btn = gr.Button(
+                    "🔄 刷新状态", variant="secondary", scale=0, min_width=120
+                )
             auto_status = gr.Markdown("点击「刷新状态」查看")
 
     # ════════════════════════════════════════════
@@ -766,27 +887,42 @@ def clash_tab():
     def _do_connect():
         ok, info = test_connection()
         if not ok:
-            return (f"❌ {info}", "",
-                    gr.Dropdown(choices=[], value=None), "",
-                    gr.Dropdown(choices=[], value=None), "",
-                    gr.Dropdown(choices=[], value=None),
-                    '<span class="btb-card-note">连接失败</span>')
+            return (
+                f"❌ {info}",
+                "",
+                gr.Dropdown(choices=[], value=None),
+                "",
+                gr.Dropdown(choices=[], value=None),
+                "",
+                gr.Dropdown(choices=[], value=None),
+                '<span class="btb-card-note">连接失败</span>',
+            )
         groups = get_proxy_groups()
         html = _build_group_tags(groups)
         names = [g["name"] for g in groups]
-        return (f"✅ {info}", html,
-                gr.Dropdown(choices=names, value=None), "",
-                gr.Dropdown(choices=[], value=None), "",
-                gr.Dropdown(choices=names, value=None),
-                '<span class="btb-card-note">选择组查看延迟</span>')
+        return (
+            f"✅ {info}",
+            html,
+            gr.Dropdown(choices=names, value=None),
+            "",
+            gr.Dropdown(choices=[], value=None),
+            "",
+            gr.Dropdown(choices=names, value=None),
+            '<span class="btb-card-note">选择组查看延迟</span>',
+        )
 
     connect_btn.click(
         fn=_do_connect,
         inputs=[],
         outputs=[
-            connection_status, groups_tags, group_dropdown,
-            switch_result, quick_dropdown, inst_switch_result,
-            latency_group, latency_table,
+            connection_status,
+            groups_tags,
+            group_dropdown,
+            switch_result,
+            quick_dropdown,
+            inst_switch_result,
+            latency_group,
+            latency_table,
         ],
     )
 
@@ -802,41 +938,61 @@ def clash_tab():
     def _refresh_groups():
         groups = get_proxy_groups()
         if not groups:
-            return ("", gr.Dropdown(choices=[], value=None), "",
-                    gr.Dropdown(choices=[], value=None), "",
-                    gr.Dropdown(choices=[], value=None),
-                    '<span class="btb-card-note">无代理组</span>')
+            return (
+                "",
+                gr.Dropdown(choices=[], value=None),
+                "",
+                gr.Dropdown(choices=[], value=None),
+                "",
+                gr.Dropdown(choices=[], value=None),
+                '<span class="btb-card-note">无代理组</span>',
+            )
         html = _build_group_tags(groups)
         names = [g["name"] for g in groups]
-        return (html, gr.Dropdown(choices=names, value=None), "",
-                gr.Dropdown(choices=[], value=None), "",
-                gr.Dropdown(choices=names, value=None),
-                '<span class="btb-card-note">选择组查看延迟</span>')
+        return (
+            html,
+            gr.Dropdown(choices=names, value=None),
+            "",
+            gr.Dropdown(choices=[], value=None),
+            "",
+            gr.Dropdown(choices=names, value=None),
+            '<span class="btb-card-note">选择组查看延迟</span>',
+        )
 
     refresh_groups_btn.click(
         fn=_refresh_groups,
         inputs=[],
         outputs=[
-            groups_tags, group_dropdown, switch_result,
-            quick_dropdown, inst_switch_result,
-            latency_group, latency_table,
+            groups_tags,
+            group_dropdown,
+            switch_result,
+            quick_dropdown,
+            inst_switch_result,
+            latency_group,
+            latency_table,
         ],
     )
 
     # ── 选组 → 更新快捷下拉 + 延迟表 ──
     def _select_group(group_name: str) -> tuple[gr.Dropdown, str, str, str]:
         if not group_name:
-            return (gr.Dropdown(choices=[], value=None), "",
-                    "请选择组",
-                    '<span class="btb-card-note">请选择组</span>')
+            return (
+                gr.Dropdown(choices=[], value=None),
+                "",
+                "请选择组",
+                '<span class="btb-card-note">请选择组</span>',
+            )
         quick = _discover_quick_nodes(group_name)
         enc = urllib.parse.quote(group_name, safe="")
         data = _req("GET", f"/proxies/{enc}")
         current = data.get("now", "") if data else ""
         lat_table = build_latency_table(group_name, live_test=True)
-        return (gr.Dropdown(choices=quick, value=None),
-                f"当前: {current}", "",
-                lat_table)
+        return (
+            gr.Dropdown(choices=quick, value=None),
+            f"当前: {current}",
+            "",
+            lat_table,
+        )
 
     group_dropdown.change(
         fn=_select_group,
@@ -846,14 +1002,22 @@ def clash_tab():
 
     # ── 延迟组选择 → 刷新延迟表 ──
     latency_group.change(
-        fn=lambda g: build_latency_table(g, live_test=True) if g else '<span class="btb-card-note">选择组</span>',
+        fn=lambda g: (
+            build_latency_table(g, live_test=True)
+            if g
+            else '<span class="btb-card-note">选择组</span>'
+        ),
         inputs=[latency_group],
         outputs=[latency_table],
     )
 
     # ── 刷新延迟（实时探测所有节点）──
     refresh_latency_btn.click(
-        fn=lambda g: build_latency_table(g, live_test=True) if g else '<span class="btb-card-note">请选择代理组</span>',
+        fn=lambda g: (
+            build_latency_table(g, live_test=True)
+            if g
+            else '<span class="btb-card-note">请选择代理组</span>'
+        ),
         inputs=[latency_group],
         outputs=[latency_table],
     )
@@ -867,7 +1031,11 @@ def clash_tab():
 
     # ── 最佳按钮 ──
     best_btn.click(
-        fn=lambda g: switch_node(g, get_best_node(g))[1] if g and get_best_node(g) else "请先连接测试",
+        fn=lambda g: (
+            switch_node(g, get_best_node(g))[1]
+            if g and get_best_node(g)
+            else "请先连接测试"
+        ),
         inputs=[group_dropdown],
         outputs=[switch_result],
     )
@@ -891,7 +1059,11 @@ def clash_tab():
         ConfigDB.insert(CFG_INSTANCE_COUNT, cnt)
         result = auto_start_instances(cnt)
         instances = get_now_available_instances()
-        dd = gr.Dropdown(choices=instances, value=None) if instances else gr.Dropdown(choices=[], value=None)
+        dd = (
+            gr.Dropdown(choices=instances, value=None)
+            if instances
+            else gr.Dropdown(choices=[], value=None)
+        )
         return result[0], result[1], dd
 
     auto_start_btn.click(
@@ -911,7 +1083,11 @@ def clash_tab():
     def _refresh_instances():
         instances = get_now_available_instances()
         tbl = _build_instance_table()
-        dd = gr.Dropdown(choices=instances, value=None) if instances else gr.Dropdown(choices=[], value=None)
+        dd = (
+            gr.Dropdown(choices=instances, value=None)
+            if instances
+            else gr.Dropdown(choices=[], value=None)
+        )
         return tbl, dd
 
     refresh_inst_btn.click(
@@ -929,14 +1105,18 @@ def clash_tab():
 
     # ── 选择实例 → 加载其节点 ──
     instance_sel.change(
-        fn=lambda iid: gr.Dropdown(choices=get_nodes_for_instance(iid or 0), value=None),
+        fn=lambda iid: gr.Dropdown(
+            choices=get_nodes_for_instance(iid or 0), value=None
+        ),
         inputs=[instance_sel],
         outputs=[node_sel],
     )
 
     # ── 切换实例节点 ──
     switch_inst_btn.click(
-        fn=lambda iid, node: switch_instance_node(iid, node) if (iid or 0) > 0 and node else "请选择",
+        fn=lambda iid, node: (
+            switch_instance_node(iid, node) if (iid or 0) > 0 and node else "请选择"
+        ),
         inputs=[instance_sel, node_sel],
         outputs=[inst_switch_result],
     )

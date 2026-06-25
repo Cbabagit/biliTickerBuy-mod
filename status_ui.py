@@ -15,36 +15,37 @@ from pathlib import Path
 
 
 # ANSI color codes
-C_RESET    = "\033[0m"
-C_BOLD     = "\033[1m"
-C_DIM      = "\033[2m"
+C_RESET = "\033[0m"
+C_BOLD = "\033[1m"
+C_DIM = "\033[2m"
 
-C_BG_BLUE  = "\033[44m"
+C_BG_BLUE = "\033[44m"
 C_BG_GREEN = "\033[42m"
-C_BG_RED   = "\033[41m"
-C_BG_YELLOW= "\033[43m"
-C_BG_GRAY  = "\033[100m"
+C_BG_RED = "\033[41m"
+C_BG_YELLOW = "\033[43m"
+C_BG_GRAY = "\033[100m"
 
 C_FG_GREEN = "\033[92m"
-C_FG_YELLOW= "\033[93m"
-C_FG_RED   = "\033[91m"
-C_FG_CYAN  = "\033[96m"
-C_FG_GRAY  = "\033[90m"
+C_FG_YELLOW = "\033[93m"
+C_FG_RED = "\033[91m"
+C_FG_CYAN = "\033[96m"
+C_FG_GRAY = "\033[90m"
 C_FG_WHITE = "\033[97m"
-C_FG_BLUE  = "\033[94m"
+C_FG_BLUE = "\033[94m"
 C_FG_BLACK = "\033[30m"
 
 # Paths
-BASE       = Path(__file__).resolve().parent
-CONFIG_PATH= BASE / "config.json"
-STATE_DIR  = BASE / "shared_buyer_state"
-LOG_DIR    = BASE / "btp_logs"
+BASE = Path(__file__).resolve().parent
+CONFIG_PATH = BASE / "config.json"
+STATE_DIR = BASE / "shared_buyer_state"
+LOG_DIR = BASE / "btp_logs"
 
 
 def enable_ansi():
     """Windows 10+ enable ANSI + UTF-8"""
     if sys.platform == "win32":
         import ctypes as _ct
+
         _ct.windll.kernel32.SetConsoleMode(_ct.windll.kernel32.GetStdHandle(-11), 7)
         try:
             sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -57,9 +58,9 @@ def set_always_on_top():
     """Set terminal window always-on-top (Windows)"""
     try:
         import ctypes as _ct
+
         _ct.windll.user32.SetWindowPos(
-            _ct.windll.user32.GetForegroundWindow(),
-            -1, 0, 0, 0, 0, 0x0001 | 0x0002
+            _ct.windll.user32.GetForegroundWindow(), -1, 0, 0, 0, 0, 0x0001 | 0x0002
         )
     except Exception:
         pass
@@ -68,6 +69,7 @@ def set_always_on_top():
 def console_title(title: str):
     if sys.platform == "win32":
         import ctypes as _ct
+
         _ct.windll.kernel32.SetConsoleTitleW(title)
     else:
         print(f"\033]0;{title}\007", end="", flush=True)
@@ -87,9 +89,17 @@ def get_process_info() -> dict:
     try:
         if sys.platform == "win32":
             out = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq biliTickerBuy.exe",
-                 "/FO", "CSV", "/NH"],
-                capture_output=True, text=True, timeout=3,
+                [
+                    "tasklist",
+                    "/FI",
+                    "IMAGENAME eq biliTickerBuy.exe",
+                    "/FO",
+                    "CSV",
+                    "/NH",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             for line in out.stdout.strip().splitlines():
                 parts = line.strip('"').split('","')
@@ -99,7 +109,9 @@ def get_process_info() -> dict:
         else:
             out = subprocess.run(
                 ["pgrep", "-x", "biliTickerBuy"],
-                capture_output=True, text=True, timeout=3,
+                capture_output=True,
+                text=True,
+                timeout=3,
             )
             for line in out.stdout.strip().splitlines():
                 if line:
@@ -161,26 +173,27 @@ def section(title: str, width: int) -> str:
 # Config display helpers
 
 KEY_LABELS = {
-    "createRetryLimit":         "Retry limit",
-    "createRequestBatchSize":   "Batch size",
-    "requestInterval":          "Req interval(ms)",
-    "queueConcurrencyLimit":    "Concurrency",
+    "createRetryLimit": "Retry limit",
+    "createRequestBatchSize": "Batch size",
+    "requestInterval": "Req interval(ms)",
+    "queueConcurrencyLimit": "Concurrency",
     "proxyMaxConsecutiveFailures": "Max proxy fails",
-    "proxyCooldownSeconds":     "Proxy cooldown(s)",
-    "proxyBackoffMaxSeconds":   "Proxy backoff max(s)",
-    "rateLimitDelayMs":         "Rate limit delay(ms)",
-    "clash.instance_count":     "Clash instances",
-    "clash.auto_switch_main":   "Auto-switch main",
-    "clash.auto_switch_child":  "Auto-switch child",
-    "clash.api_url":            "Clash API URL",
-    "clash.api_secret":         "Clash secret",
-    "clash.selected_node":      "Selected node",
-    "serverchanKey":            "ServerChan",
-    "barkToken":                "Bark",
-    "logLevel":                 "Log level",
-    "https_proxy":              "Proxy pool",
-    "notifyProxyExhausted":     "Notify exhausted",
+    "proxyCooldownSeconds": "Proxy cooldown(s)",
+    "proxyBackoffMaxSeconds": "Proxy backoff max(s)",
+    "rateLimitDelayMs": "Rate limit delay(ms)",
+    "clash.instance_count": "Clash instances",
+    "clash.auto_switch_main": "Auto-switch main",
+    "clash.auto_switch_child": "Auto-switch child",
+    "clash.api_url": "Clash API URL",
+    "clash.api_secret": "Clash secret",
+    "clash.selected_node": "Selected node",
+    "serverchanKey": "ServerChan",
+    "barkToken": "Bark",
+    "logLevel": "Log level",
+    "https_proxy": "Proxy pool",
+    "notifyProxyExhausted": "Notify exhausted",
 }
+
 
 def render_config(conf: dict) -> list[str]:
     if not conf:
@@ -244,7 +257,9 @@ def render_shared_state(state: dict) -> list[str]:
         if last_try:
             lines.append(f"  {C_DIM}|   {C_RESET}try: {fmt_time(last_try)}")
         if attempts is not None:
-            lines.append(f"  {C_DIM}|   {C_RESET}attempts: {colored(str(attempts), C_FG_YELLOW)}")
+            lines.append(
+                f"  {C_DIM}|   {C_RESET}attempts: {colored(str(attempts), C_FG_YELLOW)}"
+            )
         if extra:
             for ek, ev in extra.items():
                 lines.append(f"  {C_DIM}|   {C_RESET}{ek}={ev}")
@@ -263,9 +278,21 @@ def render_logs() -> list[str]:
     except Exception:
         return ["  (can't read log)"]
 
-    keywords = {"error", "warn", "fail", "429", "412", "blocked", "exception", "traceback"}
-    recent = [line.strip() for line in all_lines[-60:]
-              if any(k in line.lower() for k in keywords)]
+    keywords = {
+        "error",
+        "warn",
+        "fail",
+        "429",
+        "412",
+        "blocked",
+        "exception",
+        "traceback",
+    }
+    recent = [
+        line.strip()
+        for line in all_lines[-60:]
+        if any(k in line.lower() for k in keywords)
+    ]
     recent = recent[-10:]  # last 10 relevant lines
     if not recent:
         recent = all_lines[-3:]
@@ -278,10 +305,10 @@ def render(conf: dict, proc: dict, state: dict, log_entries: list[str]) -> str:
     # Header
     hdr_text = "[ biliTickerBuy Monitor ]"
     hdr = f"{C_BOLD}{C_BG_BLUE}{C_FG_WHITE}{'':^{width}}{C_RESET}\n"
-    hdr+= f"{C_BOLD}{C_BG_BLUE}{C_FG_WHITE}{hdr_text:^{width}}{C_RESET}\n"
-    hdr+= f"{C_BOLD}{C_BG_BLUE}{C_FG_WHITE}{'':^{width}}{C_RESET}"
+    hdr += f"{C_BOLD}{C_BG_BLUE}{C_FG_WHITE}{hdr_text:^{width}}{C_RESET}\n"
+    hdr += f"{C_BOLD}{C_BG_BLUE}{C_FG_WHITE}{'':^{width}}{C_RESET}"
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-    hdr+= f"\n  {C_DIM}{now_str}  |  refresh 2s{C_RESET}"
+    hdr += f"\n  {C_DIM}{now_str}  |  refresh 2s{C_RESET}"
 
     lines = [hdr]
 
@@ -317,9 +344,7 @@ def render(conf: dict, proc: dict, state: dict, log_entries: list[str]) -> str:
         lines.append("  (none)")
 
     # Footer hint
-    lines.append(
-        f"\n  {C_DIM}[Ctrl+C quit] [Window topmost]{C_RESET}"
-    )
+    lines.append(f"\n  {C_DIM}[Ctrl+C quit] [Window topmost]{C_RESET}")
 
     return "\n".join(lines)
 

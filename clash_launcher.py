@@ -14,8 +14,12 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from util.proxy.ClashInstanceManager import (  # noqa: E402
-    auto_start, stop_all, get_instance_statuses, get_assignments,
-    add_instance, remove_instance,
+    auto_start,
+    stop_all,
+    get_instance_statuses,
+    get_assignments,
+    add_instance,
+    remove_instance,
     write_child_config,
 )
 
@@ -30,7 +34,9 @@ def cmd_start(args):
         iid = s["id"]
         srv = "ALIVE" if s["alive"] else "DEAD"
         node = assignments.get(iid, "")
-        print(f"  Instance {iid}: {srv} | proxy=:{s['proxy_port']} api=:{s['api_port']} node={node}")
+        print(
+            f"  Instance {iid}: {srv} | proxy=:{s['proxy_port']} api=:{s['api_port']} node={node}"
+        )
     return 0
 
 
@@ -52,8 +58,14 @@ def cmd_status(args):
         srv = "ALIVE" if s["alive"] else "DEAD"
         assigned = assignments.get(iid, "")
         cur = s.get("current_node", "")
-        node_str = f"assigned={assigned}" if assigned == cur else f"assigned={assigned} current={cur}"
-        print(f"  Instance {iid}: {srv} | proxy=:{s['proxy_port']} api=:{s['api_port']} {node_str}")
+        node_str = (
+            f"assigned={assigned}"
+            if assigned == cur
+            else f"assigned={assigned} current={cur}"
+        )
+        print(
+            f"  Instance {iid}: {srv} | proxy=:{s['proxy_port']} api=:{s['api_port']} {node_str}"
+        )
     return 0
 
 
@@ -61,6 +73,7 @@ def cmd_reconfigure(args):
     count = int(args[0]) if args else 5
     print(f"Reconfiguring {count} Clash instances with latency-ranked assignments...")
     from util.proxy.ClashInstanceManager import _assign_nodes
+
     assignments = _assign_nodes(count)
     for instance_id, node in assignments.items():
         write_child_config(instance_id, assigned_node=node)

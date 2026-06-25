@@ -41,7 +41,9 @@ class BuyerProcessState:
     def _state_path(self, account_uid: str) -> str:
         return os.path.join(self.state_dir, SHARED_STATE_FILE % account_uid)
 
-    def write_create_attempt(self, account_uid: str, pid_mark: str | None = None) -> None:
+    def write_create_attempt(
+        self, account_uid: str, pid_mark: str | None = None
+    ) -> None:
         """记录一次 create 请求（调用者在发起前调用）"""
         state_path = self._state_path(account_uid)
         pid_mark = pid_mark or str(ProcessToken())

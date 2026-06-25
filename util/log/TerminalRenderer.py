@@ -94,7 +94,11 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
                             ("抢票间隔", f"{conf.get('requestInterval', '?')}ms"),
                             ("重试限制", str(conf.get("createRetryLimit", "?"))),
                             ("批量大小", str(conf.get("createRequestBatchSize", "?"))),
-                            ("代理池", str(len((conf.get("https_proxy", "") or "").split(","))) + " 个"),
+                            (
+                                "代理池",
+                                str(len((conf.get("https_proxy", "") or "").split(",")))
+                                + " 个",
+                            ),
                             ("Clash 实例", str(conf.get("clash.instance_count", "?"))),
                         ]
                         self._config_info = items
@@ -150,7 +154,12 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
         for label, value in self._config_info:
             cfg_table.add_row(label, value)
         self._layout["config"].update(
-            Panel(cfg_table, title="[bold]配置[/bold]", border_style="cyan", padding=(0, 1))
+            Panel(
+                cfg_table,
+                title="[bold]配置[/bold]",
+                border_style="cyan",
+                padding=(0, 1),
+            )
         )
 
         # ── 状态面板 ──
@@ -163,12 +172,23 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
         st_table.add_row("阶段", f"[{stage_style}]{st.stage}[/]")
         st_table.add_row("倒计时", f"[bold]{st.countdown}[/]")
 
-        proxy_display = st.current_proxy if len(st.current_proxy) <= 50 else st.current_proxy[:47] + "..."
+        proxy_display = (
+            st.current_proxy
+            if len(st.current_proxy) <= 50
+            else st.current_proxy[:47] + "..."
+        )
         st_table.add_row("代理", proxy_display)
-        st_table.add_row("冷却", st.cooldown if st.cooldown and st.cooldown != "-" else "[dim]-[/]")
+        st_table.add_row(
+            "冷却", st.cooldown if st.cooldown and st.cooldown != "-" else "[dim]-[/]"
+        )
 
         self._layout["status"].update(
-            Panel(st_table, title="[bold]状态[/bold]", border_style="green", padding=(0, 1))
+            Panel(
+                st_table,
+                title="[bold]状态[/bold]",
+                border_style="green",
+                padding=(0, 1),
+            )
         )
 
         # ── 事件日志 ──
@@ -219,7 +239,10 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
             return "blocked"
         if msg.startswith("距离开始抢票还有"):
             return "countdown"
-        if any(msg.startswith(p) for p in ["当前代理", "切换代理", "代理冷却", "代理池", "所有代理"]):
+        if any(
+            msg.startswith(p)
+            for p in ["当前代理", "切换代理", "代理冷却", "代理池", "所有代理"]
+        ):
             return "proxy"
         if "429" in msg or "限流" in msg:
             return "warning"
@@ -228,7 +251,9 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
     def render_state(self, state) -> None:
         self.state.stage = getattr(state, "stage", self.state.stage)
         self.state.countdown = getattr(state, "countdown", self.state.countdown)
-        self.state.current_proxy = getattr(state, "current_proxy", self.state.current_proxy)
+        self.state.current_proxy = getattr(
+            state, "current_proxy", self.state.current_proxy
+        )
         cooldown_remaining = getattr(state, "cooldown_remaining", None)
         self.state.cooldown = (
             f"{cooldown_remaining}s"
@@ -245,7 +270,7 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
         style = self._classify_message(msg_str)
         self._log_messages.append((style, msg_str))
         if len(self._log_messages) > self._max_log:
-            self._log_messages = self._log_messages[-self._max_log:]
+            self._log_messages = self._log_messages[-self._max_log :]
 
         self._build_layout()
 
@@ -259,6 +284,7 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
 
         # 退出前打印最终摘要
         import sys as _sys
+
         _sys.stdout.write("\n")
         print("━━━ 抢票结束 ━━━", flush=True)
         if self._log_messages:
@@ -323,17 +349,20 @@ class PlainTerminalRenderer(BaseTerminalRenderer):
         if not force and snapshot == self._last_snapshot:
             return
 
-        status_line = getattr(self.state, "_status_line",
+        status_line = getattr(
+            self.state,
+            "_status_line",
             f"[状态] 阶段: {self.state.stage} | "
             f"倒计时: {self.state.countdown} | "
             f"代理: {self.state.current_proxy} | "
-            f"冷却: {self.state.cooldown}"
+            f"冷却: {self.state.cooldown}",
         )
 
         header_line = f"[抢票终端] 配置: {self.context.config_name} | 日志: {self.context.log_file}"
 
         if self._header_printed:
             import sys
+
             is_tty = sys.stdout.isatty()
             if is_tty:
                 sys.stdout.write("\033[2A")

@@ -13,7 +13,11 @@ from util.request.BrowerState import (
     generate_browser_fingerprint_state,
 )
 from util.request.CookieManager import CookieManager
-from util.request.exceptions import BiliBlockedError, BiliConnectionError, BiliRateLimitError
+from util.request.exceptions import (
+    BiliBlockedError,
+    BiliConnectionError,
+    BiliRateLimitError,
+)
 from util.proxy.ProxyManager import ProxyManager
 
 
@@ -244,6 +248,7 @@ class BiliRequest:
             # 自动切换 Clash 节点
             try:
                 from util.proxy.ClashSwitcher import switch_on_failure
+
                 switch_on_failure()
             except Exception:
                 pass
@@ -266,6 +271,7 @@ class BiliRequest:
         # 请求成功时记录 Clash 节点成功
         try:
             from util.proxy.ClashSwitcher import record_success
+
             record_success()
         except Exception:
             pass

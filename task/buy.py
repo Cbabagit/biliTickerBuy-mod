@@ -52,7 +52,11 @@ from task.buy_types import (
     RetryOutcome,
 )
 from util.request.BiliRequest import BiliRequest
-from util.request.exceptions import BiliBlockedError, BiliConnectionError, BiliRateLimitError
+from util.request.exceptions import (
+    BiliBlockedError,
+    BiliConnectionError,
+    BiliRateLimitError,
+)
 from task.shared_rate_state import BuyerProcessState
 from util import ConfigDB
 from util.Constant import KFC_COOKIE_NAME, KFC_COOKIE_DOMAIN
@@ -231,10 +235,13 @@ def buy_stream(config: BuyConfig):
             # 自动保活：确保子实例已启动
             try:
                 from util.proxy.ClashInstanceManager import ensure_instance
+
                 if ensure_instance(_clash_instance):
                     logger.info(f"[ClashAuto] Clash 实例 {_clash_instance} 已就绪")
             except Exception as e:
-                logger.warning(f"[ClashAuto] 无法自动启动 Clash 实例 {_clash_instance}: {e}")
+                logger.warning(
+                    f"[ClashAuto] 无法自动启动 Clash 实例 {_clash_instance}: {e}"
+                )
     except (ValueError, TypeError):
         _clash_instance = 0
 
@@ -316,11 +323,17 @@ def buy_stream(config: BuyConfig):
         else:
             # 常规代理全部不可用/冷却中，尝试切换 Clash 节点
             try:
-                clash_ok, clash_msg, new_node = _clash_switch_on_failure(_clash_instance)
+                clash_ok, clash_msg, new_node = _clash_switch_on_failure(
+                    _clash_instance
+                )
                 if clash_ok:
-                    logger.info(f"[ClashAuto] 代理冷却中，切 Clash 实例{_clash_instance}: {new_node}")
+                    logger.info(
+                        f"[ClashAuto] 代理冷却中，切 Clash 实例{_clash_instance}: {new_node}"
+                    )
                 else:
-                    logger.debug(f"[ClashAuto] 代理冷却且 Clash 切换不可用: {clash_msg}")
+                    logger.debug(
+                        f"[ClashAuto] 代理冷却且 Clash 切换不可用: {clash_msg}"
+                    )
             except Exception:
                 pass
 
@@ -333,7 +346,11 @@ def buy_stream(config: BuyConfig):
         diagnostic = _request.describe_non_json_response(response)
         summary = _summarize_non_json_response(prefix, diagnostic)
         # 出现 412 风控时：自动切换 Clash 节点 + 代理失败处理
-        if "412 风控" in summary or "ip" in summary.lower() or "location" in summary.lower():
+        if (
+            "412 风控" in summary
+            or "ip" in summary.lower()
+            or "location" in summary.lower()
+        ):
             yield emit(
                 "proxy",
                 f"{prefix}触发 412 风控，尝试切换 Clash 节点",
@@ -350,9 +367,13 @@ def buy_stream(config: BuyConfig):
             )
             # 1) 自动切换 Clash 节点（综合评分）
             try:
-                clash_ok, clash_msg, new_node = _clash_switch_on_failure(_clash_instance)
+                clash_ok, clash_msg, new_node = _clash_switch_on_failure(
+                    _clash_instance
+                )
                 if clash_ok:
-                    logger.info(f"[ClashAuto] 实例{_clash_instance} 412 后切换到: {new_node}")
+                    logger.info(
+                        f"[ClashAuto] 实例{_clash_instance} 412 后切换到: {new_node}"
+                    )
                     ranked = _clash_ranked(_clash_instance)
                     if ranked:
                         for line in ranked.splitlines():
@@ -422,7 +443,7 @@ def buy_stream(config: BuyConfig):
     effective_retry_limit = max(1, int(config.create_retry_limit))
     effective_batch_size = max(1, int(config.create_request_batch_size))
     # === 激进模式：中票率优先，力大砖飞 ===
-    aggressive_mode = getattr(config, 'aggressive_mode', True)
+    aggressive_mode = getattr(config, "aggressive_mode", True)
     if aggressive_mode:
         request_interval = 200
         effective_batch_size = 5
@@ -438,7 +459,9 @@ def buy_stream(config: BuyConfig):
         _request._429_reset_window = 10
         config.prepare_backoff_base_ms = 1000  # prepare 退避基数 1s
         config.refresh_ttl_seconds = 300  # 刷新缓存 5 分钟
-        logger.info(f"激进模式: interval={request_interval}ms batch={effective_batch_size} retries={effective_retry_limit}")
+        logger.info(
+            f"激进模式: interval={request_interval}ms batch={effective_batch_size} retries={effective_retry_limit}"
+        )
     else:
         logger.info("常规模式: 稳定优先")
 
@@ -496,7 +519,9 @@ def buy_stream(config: BuyConfig):
             return False
         now = time.time()
         if now - _last_prepare_ts < PREPARE_COOLDOWN_SECONDS:
-            logger.warning(f"准备订单被防重复门卫拦截：距上次 prepare 仅 {now - _last_prepare_ts:.1f}s")
+            logger.warning(
+                f"准备订单被防重复门卫拦截：距上次 prepare 仅 {now - _last_prepare_ts:.1f}s"
+            )
             return False
         _prepare_in_progress = True
         return True
@@ -511,8 +536,7 @@ def buy_stream(config: BuyConfig):
         nonlocal _prepare_consecutive_failures
         _prepare_consecutive_failures += 1
         sleep_s = (
-            config.prepare_backoff_base_ms
-            * (2 ** (_prepare_consecutive_failures - 1))
+            config.prepare_backoff_base_ms * (2 ** (_prepare_consecutive_failures - 1))
         ) / 1000.0
         sleep_s = min(sleep_s, PREPARE_BACKOFF_MAX_SLEEP)
         yield emit(
@@ -659,7 +683,10 @@ def buy_stream(config: BuyConfig):
             # === Prepare 总重试上限检查 ===
             _prepare_total_retries += 1
             if _prepare_total_retries > config.prepare_max_retries:
-                yield emit("status", f"准备订单已达上限({config.prepare_max_retries}次), 停止重试")
+                yield emit(
+                    "status",
+                    f"准备订单已达上限({config.prepare_max_retries}次), 停止重试",
+                )
                 break
 
             try:
@@ -752,7 +779,12 @@ def buy_stream(config: BuyConfig):
                     should_sleep_before_next_attempt = False
                     try:
                         # === 改进 4+5: 1 秒盾对齐 + 多进程共享状态 ===
-                        if buyer_state_manager and buyer_state_manager.should_skip_window(buyer_key, MIN_CREATE_INTERVAL_MS):
+                        if (
+                            buyer_state_manager
+                            and buyer_state_manager.should_skip_window(
+                                buyer_key, MIN_CREATE_INTERVAL_MS
+                            )
+                        ):
                             logger.debug("1秒盾窗口被占用，跳过本次 create")
                             should_sleep_before_next_attempt = True
                             # 但不消耗 attempt 计数
@@ -813,15 +845,21 @@ def buy_stream(config: BuyConfig):
                             try:
                                 now_ms = current_time_ms()
                                 new_ctoken = ticket_state.snapshot(now_ms=now_ms)
-                                token_payload["token"] = new_ctoken.generate_prepare_ctoken()
+                                token_payload["token"] = (
+                                    new_ctoken.generate_prepare_ctoken()
+                                )
                                 reprepare_resp = _request.post(
                                     url=f"{base_url}/api/ticket/order/prepare?project_id={tickets_info['project_id']}",
                                     data=token_payload,
                                     isJson=True,
                                 )
-                                new_token = _extract_prepare_token(reprepare_resp.json())
+                                new_token = _extract_prepare_token(
+                                    reprepare_resp.json()
+                                )
                                 if new_token:
-                                    logger.info("[回流优化] token 过期，静默续 token 成功，继续剩余创建")
+                                    logger.info(
+                                        "[回流优化] token 过期，静默续 token 成功，继续剩余创建"
+                                    )
                                     order_token = new_token
                                     attempt -= 1  # 抵消 finally 的 attempt += 1
                                     continue
@@ -842,7 +880,11 @@ def buy_stream(config: BuyConfig):
                             tickets_info["pay_money"] = ret["data"]["pay_money"]
                         should_sleep_before_next_attempt = True
                     except (JSONDecodeError, BiliBlockedError) as exc:
-                        resp = exc.response if isinstance(exc, BiliBlockedError) else create_response
+                        resp = (
+                            exc.response
+                            if isinstance(exc, BiliBlockedError)
+                            else create_response
+                        )
                         handled_blocked = yield from handle_non_json_response(
                             "创建订单接口",
                             resp,
@@ -1030,7 +1072,9 @@ def buy_stream(config: BuyConfig):
                 break
         except BiliBlockedError as e:
             # 412/403 — _request 里已经切了代理，finally 已调 _prepare_done()
-            logger.warning(f"订单准备被风控拦截(HTTP {getattr(e.response, 'status_code', '?')})")
+            logger.warning(
+                f"订单准备被风控拦截(HTTP {getattr(e.response, 'status_code', '?')})"
+            )
             yield emit("status", "订单准备被风控拦截，自动切换代理后继续")
             continue
         except (HTTPError, RequestException) as e:

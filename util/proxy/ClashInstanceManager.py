@@ -24,7 +24,9 @@ from loguru import logger
 
 # ── 路径常量 ──
 CLASH_CORE = r"C:\Program Files\Clash Verge\verge-mihomo.exe"
-CLASH_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "clash_instances")
+CLASH_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "clash_instances"
+)
 CLASH_DIR = os.path.normpath(CLASH_DIR)
 
 VERGE_CONFIG_DIR = os.path.expandvars(
@@ -38,15 +40,17 @@ GEOSITE_DAT = os.path.join(VERGE_CONFIG_DIR, "geosite.dat")
 # ── 实例端口分配 ──
 INSTANCE_COUNT = 10  # 默认 10 个 Worker，可调整
 PORT_BASE_MIXED = 17890  # mixed-port 起点
-PORT_BASE_API = 18090   # external-controller 起点
+PORT_BASE_API = 18090  # external-controller 起点
 # 从 ConfigDB 读取密钥和主实例地址，带硬编码 fallback
 _CONFIG_READ = None  # lazy
+
 
 def _get_config(key: str, fallback: str) -> str:
     global _CONFIG_READ
     if _CONFIG_READ is None:
         try:
             from util import ConfigDB
+
             _CONFIG_READ = ConfigDB
         except (ImportError, Exception):
             _CONFIG_READ = object()  # sentinel
@@ -87,8 +91,16 @@ def _get_latency_ranked_nodes() -> list[tuple[str, int]]:
         ranked = []
         for name, proxy in data.get("proxies", {}).items():
             ptype = proxy.get("type", "")
-            if ptype in ("Selector", "URLTest", "Fallback", "Direct", "Reject",
-                         "RejectDrop", "Compatible", "Pass"):
+            if ptype in (
+                "Selector",
+                "URLTest",
+                "Fallback",
+                "Direct",
+                "Reject",
+                "RejectDrop",
+                "Compatible",
+                "Pass",
+            ):
                 continue
             alive = proxy.get("alive", False)
             delay = 9999
@@ -173,7 +185,9 @@ def _live_filter_nodes(candidates: list[str], need: int) -> list[str]:
                 f"http://{MASTER_API_HOST}/proxies/{enc}/delay"
                 f"?timeout=5000&url=http://www.gstatic.com/generate_204"
             )
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {SECRET}"})
+            req = urllib.request.Request(
+                url, headers={"Authorization": f"Bearer {SECRET}"}
+            )
             with urllib.request.urlopen(req, timeout=6) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 d = data.get("delay", 9999)
@@ -197,9 +211,13 @@ def _live_filter_nodes(candidates: list[str], need: int) -> list[str]:
     slow_or_dead = [n for n, d in results.items() if d is None or d > 2000]
 
     if len(alive) < need:
-        logger.warning(f"[ClashInstance] 实时延迟测试: 仅 {len(alive)} 个可用 (≤2000ms), {len(slow_or_dead)} 个超时/不可达, 可用数不足 {need}")
+        logger.warning(
+            f"[ClashInstance] 实时延迟测试: 仅 {len(alive)} 个可用 (≤2000ms), {len(slow_or_dead)} 个超时/不可达, 可用数不足 {need}"
+        )
     else:
-        logger.info(f"[ClashInstance] 实时延迟测试: {len(alive)} 个可用 (≤2000ms), {len(slow_or_dead)} 个超时/不可达")
+        logger.info(
+            f"[ClashInstance] 实时延迟测试: {len(alive)} 个可用 (≤2000ms), {len(slow_or_dead)} 个超时/不可达"
+        )
     for n, d in alive[:5]:
         logger.debug(f"    {n}: {d}ms")
     # 只返回实时可达的节点，超时的直接丢弃
@@ -225,15 +243,19 @@ def _assign_nodes(count: int) -> dict[int, str]:
     scored.sort(key=lambda x: (-x[0], x[2]))  # 评分降序，同分按延迟升序
 
     if len(scored) < count:
-        logger.warning(f"[ClashInstance] 节点数 ({len(scored)}) < 实例数 ({count})，部分实例会共用节点")
+        logger.warning(
+            f"[ClashInstance] 节点数 ({len(scored)}) < 实例数 ({count})，部分实例会共用节点"
+        )
 
     # 取评分前 count×2+2 个候选节点做实时延迟验证
-    candidates = [s[1] for s in scored[:min(count * 2 + 2, len(scored))]]
+    candidates = [s[1] for s in scored[: min(count * 2 + 2, len(scored))]]
     logger.info(f"[ClashInstance] 对 {len(candidates)} 个候选节点进行实时延迟测试...")
     verified = _live_filter_nodes(candidates, count)
 
     if len(verified) < count:
-        logger.warning(f"[ClashInstance] 实时测试后可用节点 ({len(verified)}) < 实例数 ({count})，仅分配前 {len(verified)} 个实例，后面跳过")
+        logger.warning(
+            f"[ClashInstance] 实时测试后可用节点 ({len(verified)}) < 实例数 ({count})，仅分配前 {len(verified)} 个实例，后面跳过"
+        )
         # 不可用节点不补位：宁可少实例，也不给不可用节点
         count = len(verified)
 
@@ -241,12 +263,16 @@ def _assign_nodes(count: int) -> dict[int, str]:
     for i in range(1, count + 1):
         assignments[i] = verified[i - 1]
 
-    logger.info(f"[ClashInstance] 节点分配完成: {len(assignments)} 个实例（评分 + 实时延迟验证，超时节点已丢弃）")
+    logger.info(
+        f"[ClashInstance] 节点分配完成: {len(assignments)} 个实例（评分 + 实时延迟验证，超时节点已丢弃）"
+    )
     for i, node in assignments.items():
         delay = _get_node_delay(node, scored)
         score = _score_node_for_assignment(node, delay)
         alive_tag = "🟢" if delay < 9999 else "🔴"
-        logger.info(f"  Instance {i} -> {node} (评分 {score}, 延迟 {delay}ms) {alive_tag}")
+        logger.info(
+            f"  Instance {i} -> {node} (评分 {score}, 延迟 {delay}ms) {alive_tag}"
+        )
 
     return assignments
 
@@ -329,10 +355,8 @@ def generate_child_config(instance_id: int, assigned_node: str | None = None) ->
         "external-controller": f"127.0.0.1:{PORT_BASE_API + instance_id}",
         "secret": SECRET,
         "unified-delay": True,
-
         # 代理节点
         "proxies": proxies,
-
         # 代理组：所有节点可用，但 assigned_node 排第一
         "proxy-groups": [
             {
@@ -341,7 +365,6 @@ def generate_child_config(instance_id: int, assigned_node: str | None = None) ->
                 "proxies": proxy_names,
             },
         ],
-
         # 规则：所有流量走买票组
         "rules": [
             "MATCH," + group_name,
@@ -359,7 +382,9 @@ def write_child_config(instance_id: int, assigned_node: str | None = None) -> st
     config = generate_child_config(instance_id, assigned_node=assigned_node)
     config_path = os.path.join(instance_dir, "config.yaml")
     with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        yaml.dump(
+            config, f, default_flow_style=False, allow_unicode=True, sort_keys=False
+        )
 
     # 复制 mmdb / geoip / geosite
     for src in [COUNTRY_MMDB, GEOIP_DAT, GEOSITE_DAT]:
@@ -371,7 +396,9 @@ def write_child_config(instance_id: int, assigned_node: str | None = None) -> st
     return config_path
 
 
-def start_instance(instance_id: int, wait_ready: bool = True) -> subprocess.Popen | None:
+def start_instance(
+    instance_id: int, wait_ready: bool = True
+) -> subprocess.Popen | None:
     """启动第 N 个 Clash 子实例
     - 确保配置已生成
     - 使用 subprocess.Popen 启动 verge-mihomo.exe
@@ -399,12 +426,16 @@ def start_instance(instance_id: int, wait_ready: bool = True) -> subprocess.Pope
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
-        logger.info(f"[ClashInstance] 实例 {instance_id} 已启动 (PID={proc.pid}, mixed:{mixed_port}, api:{api_port})")
+        logger.info(
+            f"[ClashInstance] 实例 {instance_id} 已启动 (PID={proc.pid}, mixed:{mixed_port}, api:{api_port})"
+        )
 
         if wait_ready:
             ready = _wait_for_api(api_port, timeout=20)
             if not ready:
-                logger.warning(f"[ClashInstance] 实例 {instance_id} API 未就绪，终止进程")
+                logger.warning(
+                    f"[ClashInstance] 实例 {instance_id} API 未就绪，终止进程"
+                )
                 try:
                     proc.terminate()
                 except Exception:
@@ -509,7 +540,9 @@ def ensure_all(count: int | None = None) -> list[int]:
     for i in range(1, actual_count + 1):
         if ensure_instance(i):
             started.append(i)
-            logger.info(f"[ClashInstance] 实例 {i} 已就绪 ✓ ({len(started)}/{actual_count})")
+            logger.info(
+                f"[ClashInstance] 实例 {i} 已就绪 ✓ ({len(started)}/{actual_count})"
+            )
         else:
             logger.warning(f"[ClashInstance] 实例 {i} 启动失败 ✗")
         # 递增间隔：第1个2s, 第2个2.5s, 第3个3s...
@@ -541,6 +574,7 @@ def remove_instance(instance_id: int) -> bool:
     instance_dir = os.path.join(CLASH_DIR, str(instance_id))
     if os.path.exists(instance_dir):
         import shutil
+
         shutil.rmtree(instance_dir, ignore_errors=True)
     return True
 
@@ -548,6 +582,7 @@ def remove_instance(instance_id: int) -> bool:
 def get_assignments() -> dict[int, str]:
     """获取当前节点分配表"""
     return dict(_assigned_nodes)
+
 
 def _wait_for_api(api_port: int, timeout: int = 20) -> bool:
     """等待 Clash API 就绪，带指数退避轮询"""
@@ -564,7 +599,9 @@ def _wait_for_api(api_port: int, timeout: int = 20) -> bool:
                 data = json.loads(resp.read().decode("utf-8"))
                 if "version" in data:
                     elapsed = timeout - (deadline - time.time())
-                    logger.info(f"[ClashInstance] API :{api_port} 就绪 (v{data['version']}, {attempts}次尝试, {elapsed:.1f}s)")
+                    logger.info(
+                        f"[ClashInstance] API :{api_port} 就绪 (v{data['version']}, {attempts}次尝试, {elapsed:.1f}s)"
+                    )
                     return True
         except Exception:
             pass
@@ -579,7 +616,9 @@ def _api_req(instance_id: int, method: str, path: str, body=None) -> dict | None
     url = f"http://127.0.0.1:{api_port}{path}"
     data = json.dumps(body).encode("utf-8") if body else None
     req = urllib.request.Request(
-        url, data=data, method=method,
+        url,
+        data=data,
+        method=method,
         headers={
             "Authorization": f"Bearer {SECRET}",
             "Content-Type": "application/json",
@@ -666,19 +705,25 @@ def get_instance_statuses() -> list[dict]:
             try:
                 grp, nodes = get_proxy_group(instance_id)
                 if grp:
-                    data2 = _api_req(instance_id, "GET", f"/proxies/{urllib.parse.quote(grp, safe='')}")
+                    data2 = _api_req(
+                        instance_id,
+                        "GET",
+                        f"/proxies/{urllib.parse.quote(grp, safe='')}",
+                    )
                     if data2:
                         current_node = data2.get("now", current_node or "")
             except Exception:
                 pass
 
-        statuses.append({
-            "id": instance_id,
-            "alive": alive,
-            "api_port": api_port,
-            "proxy_port": proxy_port,
-            "group": f"buy-{instance_id}",
-            "assigned_node": _assigned_nodes.get(instance_id, ""),
-            "current_node": current_node,
-        })
+        statuses.append(
+            {
+                "id": instance_id,
+                "alive": alive,
+                "api_port": api_port,
+                "proxy_port": proxy_port,
+                "group": f"buy-{instance_id}",
+                "assigned_node": _assigned_nodes.get(instance_id, ""),
+                "current_node": current_node,
+            }
+        )
     return statuses

@@ -314,7 +314,9 @@ def go_settings_tab(header_ui):
             parsed = RATE_LIMIT_BACKOFF_BASE_MS
         ConfigDB.insert("rateLimitBackoffBaseMs", parsed)
         return gr.update(
-            value=ConfigDB.get_as_int("rateLimitBackoffBaseMs", RATE_LIMIT_BACKOFF_BASE_MS)
+            value=ConfigDB.get_as_int(
+                "rateLimitBackoffBaseMs", RATE_LIMIT_BACKOFF_BASE_MS
+            )
         )
 
     def update_backoff_max_ms(value):
@@ -324,7 +326,9 @@ def go_settings_tab(header_ui):
             parsed = RATE_LIMIT_BACKOFF_MAX_MS
         ConfigDB.insert("rateLimitBackoffMaxMs", parsed)
         return gr.update(
-            value=ConfigDB.get_as_int("rateLimitBackoffMaxMs", RATE_LIMIT_BACKOFF_MAX_MS)
+            value=ConfigDB.get_as_int(
+                "rateLimitBackoffMaxMs", RATE_LIMIT_BACKOFF_MAX_MS
+            )
         )
 
     def _bind_number_commit(component, fn):
@@ -584,7 +588,7 @@ def go_settings_tab(header_ui):
                         value=ConfigDB.get("barkToken") or "",
                         label="Bark的Token｜输入完成后回车键保存",
                         interactive=True,
-                        info='iOS Bark 服务器页面获取。',
+                        info="iOS Bark 服务器页面获取。",
                     )
                     gr.Markdown("#### MeoW")
                     meow_ui = gr.Textbox(

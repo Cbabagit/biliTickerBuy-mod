@@ -30,8 +30,10 @@ def _get_instance_port(instance_id: int) -> int:
         # 主实例 (VergeRev)
         try:
             from util import ConfigDB
+
             url = (ConfigDB.get("clash.api_url") or "http://127.0.0.1:9097").rstrip("/")
             import re
+
             m = re.search(r":(\d+)$", url)
             return int(m.group(1)) if m else 9097
         except (ImportError, Exception):
@@ -44,20 +46,28 @@ def _get_instance_port(instance_id: int) -> int:
 def _get_secret() -> str:
     try:
         from util import ConfigDB
+
         return ConfigDB.get("clash.api_secret") or "set-your-secret"
     except (ImportError, Exception):
         return "set-your-secret"
 
 
-def _req(instance_id: int, method: str, path: str, body: Any = None, timeout: int = 5) -> Any:
+def _req(
+    instance_id: int, method: str, path: str, body: Any = None, timeout: int = 5
+) -> Any:
     port = _get_instance_port(instance_id)
     secret = _get_secret()
     url = f"http://127.0.0.1:{port}{path}"
     data = json.dumps(body).encode("utf-8") if body else None
-    req = urllib.request.Request(url, data=data, method=method, headers={
-        "Authorization": f"Bearer {secret}",
-        "Content-Type": "application/json",
-    })
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {secret}",
+            "Content-Type": "application/json",
+        },
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8")
@@ -71,9 +81,11 @@ def _req(instance_id: int, method: str, path: str, body: Any = None, timeout: in
 
 # ── 节点历史记录 ──
 
+
 @dataclass
 class NodeHistory:
     """单个节点使用历史"""
+
     node: str
     successes: int = 0
     failures: int = 0
@@ -118,7 +130,9 @@ class NodeTracker:
         # instance_id -> {node: NodeHistory}
         self._histories: dict[int, dict[str, NodeHistory]] = defaultdict(dict)
         # instance_id -> (group, node)
-        self._current: dict[int, tuple[str | None, str | None]] = defaultdict(lambda: (None, None))
+        self._current: dict[int, tuple[str | None, str | None]] = defaultdict(
+            lambda: (None, None)
+        )
         self._banned_until: dict[str, float] = {}
         self._last_switch_time: float = 0.0
 
@@ -139,7 +153,9 @@ class NodeTracker:
             h.record_failure()
             if h.recent_failure_count(600) >= 3:
                 self._banned_until[node] = time.time() + 300
-                logger.info(f"[ClashSwitcher:{instance_id}] {node} 连续失败 3 次，禁用 5 分钟")
+                logger.info(
+                    f"[ClashSwitcher:{instance_id}] {node} 连续失败 3 次，禁用 5 分钟"
+                )
 
     def set_current(self, instance_id: int, group: str, node: str):
         with self._lock:
@@ -218,9 +234,17 @@ class NodeTracker:
         if current_node and group_proxies:
             current_region = _extract_region(current_node)
             candidate_region = _extract_region(node)
-            if current_region and candidate_region and current_region != candidate_region:
+            if (
+                current_region
+                and candidate_region
+                and current_region != candidate_region
+            ):
                 region_score = 10.0
-            elif current_region and candidate_region and current_region == candidate_region:
+            elif (
+                current_region
+                and candidate_region
+                and current_region == candidate_region
+            ):
                 region_score = 2.0
         score += region_score
 
@@ -281,12 +305,15 @@ def _is_real_proxy_node(name: str) -> bool:
 
 # ── 公开 API（全部接受 instance_id 参数）──
 
+
 def is_api_available(instance_id: int = 0) -> bool:
     data = _req(instance_id, "GET", "/version")
     return data is not None and "version" in data
 
 
-def get_proxy_group(instance_id: int = 0, group_name: str | None = None) -> tuple[str | None, list[str]]:
+def get_proxy_group(
+    instance_id: int = 0, group_name: str | None = None
+) -> tuple[str | None, list[str]]:
     if group_name:
         enc = urllib.parse.quote(group_name, safe="")
         data = _req(instance_id, "GET", f"/proxies/{enc}")
@@ -327,8 +354,14 @@ def get_comprehensive_scores(
     all_proxies = {}
     for name, info in proxies_data.get("proxies", {}).items():
         if info.get("type") not in (
-            "Selector", "URLTest", "Fallback", "Direct",
-            "Reject", "RejectDrop", "Compatible", "Pass"
+            "Selector",
+            "URLTest",
+            "Fallback",
+            "Direct",
+            "Reject",
+            "RejectDrop",
+            "Compatible",
+            "Pass",
         ):
             all_proxies[name] = info
 
@@ -407,7 +440,7 @@ def get_ranked_list(instance_id: int = 0, group: str | None = None) -> str:
     for i, (node, score, delay, alive) in enumerate(scored[:10]):
         status = "UP" if alive else "DOWN"
         ban = " BANNED" if _tracker.is_banned(node) else ""
-        lines.append(f"  {i+1}. [{status}] {node} [{delay}ms] {score}分{ban}")
+        lines.append(f"  {i + 1}. [{status}] {node} [{delay}ms] {score}分{ban}")
     if len(scored) > 10:
         lines.append(f"  ... 共 {len(scored)} 个节点")
     return "\n".join(lines)
@@ -423,6 +456,7 @@ def is_auto_switch_enabled(instance_id: int = 0) -> bool:
     """检查该实例的自动切换是否启用（从 ConfigDB 读取）"""
     try:
         from util import ConfigDB
+
         if instance_id == 0:
             val = ConfigDB.get(CFG_AUTO_MAIN)
         else:
@@ -433,6 +467,7 @@ def is_auto_switch_enabled(instance_id: int = 0) -> bool:
 
 
 # ── 跨实例反亲和性 ──
+
 
 def _get_other_instances_current_node(own_instance_id: int) -> set[str]:
     """查询其他所有在线实例当前选中的节点，返回集合"""
@@ -452,7 +487,9 @@ def _get_other_instances_current_node(own_instance_id: int) -> set[str]:
     return used
 
 
-def switch_on_failure(instance_id: int = 0, group: str | None = None) -> tuple[bool, str, str]:
+def switch_on_failure(
+    instance_id: int = 0, group: str | None = None
+) -> tuple[bool, str, str]:
     # 检查自动切换开关
     if not is_auto_switch_enabled(instance_id):
         return False, "自动切换已禁用", ""
@@ -502,7 +539,9 @@ def switch_on_failure(instance_id: int = 0, group: str | None = None) -> tuple[b
     return ok, msg, best[0]
 
 
-def switch_best_comprehensive(instance_id: int = 0, group: str | None = None) -> tuple[bool, str]:
+def switch_best_comprehensive(
+    instance_id: int = 0, group: str | None = None
+) -> tuple[bool, str]:
     group, all_nodes = get_proxy_group(instance_id, group)
     if not group or not all_nodes:
         return False, "未找到可用的代理组"
@@ -514,7 +553,9 @@ def switch_best_comprehensive(instance_id: int = 0, group: str | None = None) ->
     _, current_node = _tracker.get_current(instance_id)
     other_used = _get_other_instances_current_node(instance_id)
 
-    candidates = [s for s in scored if s[0] != current_node and s[3] and s[0] not in other_used]
+    candidates = [
+        s for s in scored if s[0] != current_node and s[3] and s[0] not in other_used
+    ]
     if not candidates:
         candidates = [s for s in scored if s[3] and s[0] != current_node]
     if not candidates:
@@ -527,6 +568,7 @@ def switch_best_comprehensive(instance_id: int = 0, group: str | None = None) ->
 
 
 # ── 实时延迟探测 ──
+
 
 def test_all_delays(
     instance_id: int = 0,
@@ -548,8 +590,14 @@ def test_all_delays(
     all_proxies = {}
     for name, info in proxies_data.get("proxies", {}).items():
         if info.get("type") not in (
-            "Selector", "URLTest", "Fallback", "Direct",
-            "Reject", "RejectDrop", "Compatible", "Pass"
+            "Selector",
+            "URLTest",
+            "Fallback",
+            "Direct",
+            "Reject",
+            "RejectDrop",
+            "Compatible",
+            "Pass",
         ):
             all_proxies[name] = info
 
@@ -570,10 +618,15 @@ def test_all_delays(
         try:
             enc = urllib.parse.quote(name, safe="")
             test_url = f"http://127.0.0.1:{port}/proxies/{enc}/delay"
-            full_url = f"{test_url}?timeout={timeout}&url={urllib.parse.quote(url, safe='')}"
-            req = urllib.request.Request(full_url, headers={
-                "Authorization": f"Bearer {secret}",
-            })
+            full_url = (
+                f"{test_url}?timeout={timeout}&url={urllib.parse.quote(url, safe='')}"
+            )
+            req = urllib.request.Request(
+                full_url,
+                headers={
+                    "Authorization": f"Bearer {secret}",
+                },
+            )
             with urllib.request.urlopen(req, timeout=timeout // 1000 + 2) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 delay = int(data.get("delay", 9999))
@@ -588,7 +641,9 @@ def test_all_delays(
             name, delay = future.result()
             results[name] = delay
 
-    logger.info(f"[ClashSwitcher] 延迟测试完成: {len(results)}/{len(real_nodes)} 个节点")
+    logger.info(
+        f"[ClashSwitcher] 延迟测试完成: {len(results)}/{len(real_nodes)} 个节点"
+    )
     return results
 
 
