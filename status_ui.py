@@ -264,12 +264,12 @@ def render_logs() -> list[str]:
         return ["  (can't read log)"]
 
     keywords = {"error", "warn", "fail", "429", "412", "blocked", "exception", "traceback"}
-    recent = [l.strip() for l in all_lines[-60:]
-              if any(k in l.lower() for k in keywords)]
+    recent = [line.strip() for line in all_lines[-60:]
+              if any(k in line.lower() for k in keywords)]
     recent = recent[-10:]  # last 10 relevant lines
     if not recent:
         recent = all_lines[-3:]
-    return [f"  {C_DIM}{l[:78]}{C_RESET}" for l in recent]
+    return [f"  {C_DIM}{line[:78]}{C_RESET}" for line in recent]
 
 
 def render(conf: dict, proc: dict, state: dict, log_entries: list[str]) -> str:

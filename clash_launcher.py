@@ -7,22 +7,23 @@ Clash 子实例启动/停止脚本
        python clash_launcher.py reconfigure [count=3]
 """
 
-import json, os, sys, time, signal
+import os
+import sys
 
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from util.proxy.ClashInstanceManager import (  # noqa: E402
     auto_start, stop_all, get_instance_statuses, get_assignments,
-    ensure_instance, add_instance, remove_instance,
-    write_child_config, CLASH_DIR, INSTANCE_COUNT,
+    add_instance, remove_instance,
+    write_child_config,
 )
 
 
 def cmd_start(args):
     count = int(args[0]) if args else 5
     print(f"Auto-starting {count} Clash instances (node assignment + start)...")
-    started = auto_start(count)
+    auto_start(count)
     statuses = get_instance_statuses()
     assignments = get_assignments()
     for s in statuses:

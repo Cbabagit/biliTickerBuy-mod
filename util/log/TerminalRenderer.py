@@ -129,7 +129,7 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
         )
         self._live.__enter__()
 
-    def _build_layout(self) -> "Layout":
+    def _build_layout(self) -> "Layout":  # noqa: F821
         from rich.console import Group, Text
         from rich.panel import Panel
         from rich.table import Table
@@ -138,7 +138,7 @@ class RichLiveTerminalRenderer(BaseTerminalRenderer):
         # ── 标题行 ──
         now_str = time.strftime("%H:%M:%S")
         title = RichText()
-        title.append(f" biliTickerBuy ", style="bold white on blue")
+        title.append(" biliTickerBuy ", style="bold white on blue")
         title.append(f" {self.context.config_name} ", style="bold cyan")
         title.append(f"  {now_str}  ", style="dim white")
         self._layout["header"].update(Panel(title, style="blue", padding=(0, 1)))

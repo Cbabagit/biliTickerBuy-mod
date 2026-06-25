@@ -4,7 +4,6 @@ Clash 节点管理 Tab — 重写 v3
 """
 
 import json
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -356,7 +355,7 @@ def switch_instance_node(instance_id: int, node_name: str) -> str:
             return f"❌ 实例 {instance_id} 无可用组"
         from util.proxy.ClashInstanceManager import _force_select_node
         ok = _force_select_node(instance_id, node_name)
-        return f"✅ 实例 {instance_id} → {node_name}" if ok else f"❌ 切换失败"
+        return f"✅ 实例 {instance_id} → {node_name}" if ok else "❌ 切换失败"
     except Exception as e:
         return f"❌ {e}"
 
@@ -597,8 +596,6 @@ def _discover_quick_nodes(group: str) -> list:
     proxies = get_proxies()
     sub_groups = set(n for n in data["all"] if n not in proxies)
     real_nodes = [n for n in data["all"] if n not in sub_groups]
-    current = data.get("now", "")
-
     quick = [("⚡ 切换至…", "__sep__")]
     best = get_best_node(group)
     if best:
@@ -664,7 +661,7 @@ def clash_tab():
                     label="代理组", choices=[], interactive=True, scale=3,
                 )
                 refresh_latency_btn = gr.Button("🔄 刷新延迟", variant="secondary", scale=0, min_width=120)
-                auto_refresh = gr.Checkbox(label="自动刷新", value=False, scale=0, min_width=100)
+                gr.Checkbox(label="自动刷新", value=False, scale=0, min_width=100)
             latency_table = gr.HTML(
                 '<span class="btb-card-note">点击「连接测试」后选择组查看延迟</span>',
                 elem_id="clash-latency-table",

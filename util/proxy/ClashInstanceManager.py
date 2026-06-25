@@ -11,7 +11,6 @@ Config 模板自动从 VergeRev 的 profile 生成，仅包含 proxies + proxy-g
 import json
 import os
 import shutil
-import signal
 import subprocess
 import threading
 import time

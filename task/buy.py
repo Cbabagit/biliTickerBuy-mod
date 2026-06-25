@@ -59,8 +59,6 @@ from util.Constant import KFC_COOKIE_NAME, KFC_COOKIE_DOMAIN
 from util.proxy.ClashSwitcher import (
     is_api_available as _clash_api_available,
     switch_on_failure as _clash_switch_on_failure,
-    switch_best_comprehensive as _clash_switch_best,
-    record_success as _clash_record_success,
     get_status_text as _clash_status,
     get_ranked_list as _clash_ranked,
 )
@@ -412,7 +410,7 @@ def buy_stream(config: BuyConfig):
                 for line in ranked.splitlines():
                     logger.info(f"[ClashAuto] {line}")
         else:
-            logger.info(f"[ClashAuto] Clash API 不可用，跳过")
+            logger.info("[ClashAuto] Clash API 不可用，跳过")
     except Exception as exc:
         logger.debug(f"[ClashAuto] 初始化失败: {exc}")
 
@@ -423,15 +421,12 @@ def buy_stream(config: BuyConfig):
     request_interval = max(1, int(config.interval or 1000))
     effective_retry_limit = max(1, int(config.create_retry_limit))
     effective_batch_size = max(1, int(config.create_request_batch_size))
-    rate_limit_delay_ms = max(0, int(config.rate_limit_delay_ms))
-
     # === 激进模式：中票率优先，力大砖飞 ===
     aggressive_mode = getattr(config, 'aggressive_mode', True)
     if aggressive_mode:
         request_interval = 200
         effective_batch_size = 5
         effective_retry_limit = 200
-        rate_limit_delay_ms = 50
         # 代理配置更激进：容忍 5 次失败，30s 冷却，120s 封顶
         config.proxy_max_consecutive_failures = 5
         config.proxy_cooldown_seconds = 30
