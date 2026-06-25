@@ -1,67 +1,97 @@
 <div align="center">
-  <a href="https://github.com/mikumifa/biliTickerBuy" target="_blank">
-    <img width="160" src="assets/icon.ico" alt="logo">
-  </a>
-  <h2 id="koishi">biliTickerBuy</h1>
+  <img width="160" src="assets/icon.ico" alt="logo">
+  <h2>biliTickerBuy-mod</h1>
 
 <p>
-  <!-- GitHub Downloads -->
-  <a href="https://github.com/mikumifa/biliTickerBuy/releases">
-    <img src="https://img.shields.io/github/downloads/mikumifa/biliTickerBuy/total" alt="GitHub all releases">
+  <a href="https://github.com/Cbabagit/biliTickerBuy-mod/releases">
+    <img src="https://img.shields.io/github/downloads/Cbabagit/biliTickerBuy-mod/total" alt="Downloads">
   </a>
-  <!-- GitHub Release Version -->
-  <a href="https://github.com/mikumifa/biliTickerBuy/releases">
-    <img src="https://img.shields.io/github/v/release/mikumifa/biliTickerBuy" alt="GitHub release (with filter)">
+  <a href="https://github.com/Cbabagit/biliTickerBuy-mod/releases">
+    <img src="https://img.shields.io/github/v/release/Cbabagit/biliTickerBuy-mod" alt="Release">
   </a>
-  <!-- GitHub Issues -->
-  <a href="https://github.com/mikumifa/biliTickerBuy/issues">
-    <img src="https://img.shields.io/github/issues/mikumifa/biliTickerBuy" alt="GitHub issues">
-  </a>
-  <!-- GitHub Stars -->
-  <a href="https://github.com/mikumifa/biliTickerBuy/stargazers">
-    <img src="https://img.shields.io/github/stars/mikumifa/biliTickerBuy" alt="GitHub Repo stars">
+  <a href="https://github.com/Cbabagit/biliTickerBuy-mod/issues">
+    <img src="https://img.shields.io/github/issues/Cbabagit/biliTickerBuy-mod" alt="Issues">
   </a>
 </p>
-<a href="https://trendshift.io/repositories/11145" target="_blank"><img src="https://trendshift.io/api/badge/repositories/11145" alt="mikumifa%2FbiliTickerBuy | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 
-这是一个开源免费，简单易用的 B 站会员购辅助工具
+**基于 [mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) v2.15.13 的定制优化版本**  
+开源免费，B 站会员购辅助工具 — 激进抢票策略、429 退避、多实例协调
 
 </div>
 
-## 💻 快速安装
+## 📦 与上游的差异
 
-请查看完整的 [安装指南](./docs/installation.md)。
+| 特性 | 上游 | 本 Mod |
+|------|------|--------|
+| 429 限速处理 | 固定重试 | 指数退避，`min(2^(attempt-1), 60s)` |
+| 请求并发 | 1 个 | 批量 3 并发 |
+| 默认重试次数 | 10 次 | 30 次 |
+| 1 秒盾 | 可能误判自身进程 | 已修复，排除自身 |
+| 代理管理 | 基础切换 | 多实例反亲和、故障冷却、指数退避 |
+| 监控仪表盘 | ❌ | 内置 Gradio 仪表盘 |
+| 双实例协调 | ❌ | primary/secondary 协同 |
+| UA 轮换 | 固定 | 随机化、延迟策略 |
+| tinydb 损坏 | 可能崩溃 | 自动修复 |
 
-## 👀 使用说明书
+## 🚀 快速开始
 
-前往飞书： https://n1x87b5cqay.feishu.cn/wiki/Eg4xwt3Dbiah02k1WqOcVk2YnMd
+### 下载可执行文件
 
-## ❗ 项目问题
+从 [Releases](https://github.com/Cbabagit/biliTickerBuy-mod/releases) 下载 `biliTickerBuy.exe`，直接运行即可。
 
-程序使用问题： [点此链接前往 discussions](https://github.com/mikumifa/biliTickerBuy/discussions)
+### 从源码运行
 
-反馈程序 BUG 或者提新功能建议： [点此链接向项目提出反馈 BUG](https://github.com/mikumifa/biliTickerBuy/issues/new/choose)
+```bash
+git clone https://github.com/Cbabagit/biliTickerBuy-mod.git
+cd biliTickerBuy-mod
+pip install -r requirements.txt
+python main.py
+```
 
-## Related Work
+### 配置文件
 
-Skill版本：https://github.com/mikumifa/biliTickerSkill
+1. 将你的 B 站 cookies 填入 `cookies.json`（参考模板格式）
+2. 编辑 `config.json` 设置代理、通知等参数
+3. 运行后通过 Gradio UI 上传票务配置文件
 
-分布式版本：https://github.com/mikumifa/biliTickerStorm
+> **安全提示：** `cookies.json` 和 `config.json` 包含敏感信息，已默认被 `.gitignore` 排除，不会被提交到仓库。
 
-## 📩 免责声明
-本项目遵循 MIT License 许可协议，仅供个人学习与研究使用。请勿将本项目用于任何商业牟利行为，亦严禁用于任何形式的代抢、违法行为或违反相关平台规则的用途。由此产生的一切后果均由使用者自行承担，与本人无关。
-若您 fork 或使用本项目，请务必遵守相关法律法规与目标平台规则。
-## 🛡️ 平台尊重声明
-本项目在设计时严格遵循「非侵入式」原则，避免对目标服务器（如 Bilibili）造成任何干扰。
-如本项目中存在侵犯 Bilibili 公司合法权益的内容，请通过邮箱 [1055069518@qq.com](mailto:1055069518@qq.com) 与我联系，我将第一时间下架相关内容并删除本仓库。对此造成的不便，我深表歉意，感谢您的理解与包容。
+## 🔧 Mod 改动详情
 
-## 🤩 项目贡献者
+### 核心优化
+- **`task/buy.py`** — 429 指数退避算法，失败时等待时间呈指数增长，避免封号
+- **`task/shared_rate_state.py`** — 修复 1 秒盾逻辑，排除自身进程避免自我阻塞
+- **`app_cmd/config/ConfigBasic.py`** — 默认重试 30 次、批量 3 并发
 
-<a href="https://github.com/mikumifa/biliTickerBuy/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=mikumifa/biliTickerBuy&preview=true&max=&columns=" />
-</a>
-<br /><br />
+### 监控 & 协调
+- **`tab/dashboard.py`** — Gradio 内置实时监控仪表盘
+- **`app_cmd/ticker.py`** — dashboard tab 支持
+- **`task/coordinator.py`** — 双实例协调（primary/secondary 通过共享 JSON 互通状态）
+
+### 反检测
+- **`task/antidetect.py`** — UA 轮换、请求延迟策略、行为随机化
+
+### 网络层
+- **`util/request/BiliRequest.py`** — 429 指数退避、ProxyError/100001 异常优化
+
+### 稳定性
+- **`interface/project.py`** — 移除 `is_hot_project` 依赖
+- **`tab/settings.py`** — 索引有效性验证
+- **`util/Storage/KVDatabase.py`** — tinydb 文件损坏自动修复
+
+## 📖 完整文档
+
+详细使用方法请参阅上游的 [安装指南](./docs/installation.md) 或 [飞书文档](https://n1x87b5cqay.feishu.cn/wiki/Eg4xwt3Dbiah02k1WqOcVk2YnMd)。
+
+## ⚠️ 免责声明
+
+本项目遵循 MIT License 许可协议，仅供个人学习与研究使用。请勿用于任何商业牟利行为或违反相关平台规则的用途。产生的后果由使用者自行承担。
+
+## 🙏 致谢
+
+- 上游项目：[mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) — 感谢原作者的开源贡献
+- 相关项目：[biliTickerSkill](https://github.com/mikumifa/biliTickerSkill)、[biliTickerStorm](https://github.com/mikumifa/biliTickerStorm)
 
 ## ⭐️ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=mikumifa/biliTickerBuy&type=Date)](https://www.star-history.com/#mikumifa/biliTickerBuy&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=Cbabagit/biliTickerBuy-mod&type=Date)](https://www.star-history.com/#Cbabagit/biliTickerBuy-mod&Date)
