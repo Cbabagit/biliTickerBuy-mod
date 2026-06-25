@@ -207,8 +207,8 @@ class BuyConfig(BasicConfig):
         env="BTB_AGGRESSIVE_MODE",
         runtime="aggressive_mode",
         db="aggressiveMode",
-        cli_true="--aggressive",
-        cli_false="--no-aggressive",
+        cli_true="--aggressive-mode",
+        cli_false="--no-aggressive-mode",
         cast=str_to_bool,
     )
     """Aggressive mode: higher concurrency, shorter delays, more retries."""

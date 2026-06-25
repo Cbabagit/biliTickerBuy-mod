@@ -1,40 +1,43 @@
-config
-venv
-.venv
-.idea
-dist
-log/*
-log/log.txt
-build
-*.pyc
-*.log
-*.json
-!assets/fail_messages.json
-tmp/*
-tmp
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-geetest/dataset
-geetest/debug
-test.py
-main.build
-main.dist
-.DS_Store
-bilitickerbuy.egg-info
-btb_runs
-confirmOrder.*.js
-dev
-local_overrides/
-test.py
-btb_logs/
-shared_buyer_state/
-dist_new*/
-venv.bak/
-!app_cmd/config
+*.pyc
+*.pyo
+*.egg-info/
 dist/
-biliTickerBuy.exe
-cookies.json.bak
-local_release/
-btb_tmp_config.json
+build/
+build_release/
 
+# Runtime data
+config.json
+cookies.json
+btb_logs/
+releases/
+*.bak
+gradio_*.log
+shared_buyer_state/
+tmp/
+_clash_tmp/
+_gradio_*.txt
+
+# Clash runtime
+clash_instances/
+*.cache.db
+Country.mmdb
+geoip.dat
+geosite.dat
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Runtime logs
+gradio_output.log
+gradio_run.log
+
+# Debug scripts
+check_instances.py
+test_check.py

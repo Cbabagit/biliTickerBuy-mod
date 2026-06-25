@@ -689,16 +689,27 @@ def stop_all():
 
 
 def get_instance_statuses() -> list[dict]:
-    """获取所有实例状态（含当前节点名）"""
+    """获取所有子实例状态（含当前节点名），跳过实例 0（主实例 VergeRev 9097）
+    遇到连续 3 个 API 无响应的端口自动停止扫描，避免大量 502/连接拒绝日志
+    """
     statuses = []
-    for instance_id in range(INSTANCE_COUNT):
+    missing = 0
+    for instance_id in range(1, INSTANCE_COUNT):
         api_port = PORT_BASE_API + instance_id
         proxy_port = PORT_BASE_MIXED + instance_id
+        # 跳过未实际启动的实例（连续 3 个无响应即停止扫描）
         try:
             data = _api_req(instance_id, "GET", "/version")
             alive = data is not None and "version" in data
         except Exception:
             alive = False
+
+        if not alive:
+            missing += 1
+            if missing >= 3:
+                break
+        else:
+            missing = 0
 
         current_node = _assigned_nodes.get(instance_id, "")
         if alive:

@@ -470,11 +470,29 @@ def is_auto_switch_enabled(instance_id: int = 0) -> bool:
 
 
 def _get_other_instances_current_node(own_instance_id: int) -> set[str]:
-    """查询其他所有在线实例当前选中的节点，返回集合"""
+    """查询其他所有在线实例当前选中的节点，返回集合
+    只遍历有 API 响应的实例，避免查询不存在端口造成 502 日志噪音
+    """
     used = set()
-    for iid in range(1, 12):  # 最多查 11 个实例
+    # 动态探测可用实例：从 1 开始，遇到连续 3 个端口无响应就停止
+    missing = 0
+    max_live_instances = 30  # 安全上限
+    for iid in range(1, max_live_instances + 1):
         if iid == own_instance_id:
             continue
+        try:
+            data = _req(iid, "GET", "/version")
+            if not data or "version" not in data:
+                missing += 1
+                if missing >= 3:
+                    break
+                continue
+        except Exception:
+            missing += 1
+            if missing >= 3:
+                break
+            continue
+        missing = 0  # 在线实例，重置缺失计数
         try:
             grp, _ = get_proxy_group(iid)
             if grp:
