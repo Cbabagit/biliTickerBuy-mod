@@ -1,0 +1,284 @@
+import secrets
+import time
+from collections.abc import Callable
+
+import loguru
+import requests
+from requests import Response
+from util.Constant import H2_LIMITS, H2_TIMEOUT
+from util.request.BrowerState import (
+    BrowserFingerprintState,
+    build_headers_from_browser_state,
+    finalize_device_id,
+    generate_browser_fingerprint_state,
+)
+from util.request.CookieManager import CookieManager
+from util.request.exceptions import BiliBlockedError, BiliConnectionError, BiliRateLimitError
+from util.proxy.ProxyManager import ProxyManager
+
+
+class BiliRequest:
+    def __init__(
+        self,
+        headers=None,
+        cookies=None,
+        cookies_config_path=None,
+        proxy: str = "none",
+        browser_state: BrowserFingerprintState | None = None,
+        proxy_failure_threshold: int = 2,
+        proxy_cooldown_seconds: float = 180.0,
+    ):
+        self.browser_state = browser_state or generate_browser_fingerprint_state()
+        self.deviceId = finalize_device_id(secrets.token_hex(16))
+        self.session = requests.Session()
+        self.proxy_manager = ProxyManager(
+            proxy,
+            failure_threshold=proxy_failure_threshold,
+            cooldown_seconds=proxy_cooldown_seconds,
+        )
+        self.cookieManager = CookieManager(cookies_config_path, cookies)
+        self.headers = build_headers_from_browser_state(
+            self.browser_state,
+            base_headers=headers,
+            referer="https://show.bilibili.com/",
+            content_type="application/x-www-form-urlencoded",
+        )
+        self.request_count = 0  # 记录请求次数
+        self.consecutive_429_count = 0  # 连续 429 计数
+        self._last_429_ts = 0  # 上次 429 时间戳（用于时间窗衰减）
+        self._429_reset_window = 30  # 连续 429 重置窗（秒），超过此值视为新轮次
+        self.proxy_manager.apply_to_session(self.session)
+        self._h2_client = None
+        self.createTime = int(time.time() * 1000)
+        self._handle_100001: Callable[[], None] | None = None
+
+    def _rotate_proxy(self, reason: str) -> bool:
+        if not self.proxy_manager.rotate():
+            return False
+        self.proxy_manager.apply_to_session(self.session)
+        self._invalidate_h2_client()
+        return True
+
+    def _invalidate_h2_client(self):
+        if self._h2_client is None:
+            return
+        try:
+            self._h2_client.close()
+        except Exception:
+            pass
+        self._h2_client = None
+
+    def get_user_agent(self) -> str:
+        return self.headers.get("user-agent", "")
+
+    def snapshot_proxy_state(self) -> int:
+        return self.proxy_manager.snapshot()
+
+    def restore_proxy_state(self, state: int) -> None:
+        self.proxy_manager.restore(state)
+        self.proxy_manager.apply_to_session(self.session)
+        self._invalidate_h2_client()
+
+    def clear_request_count(self):
+        self.request_count = 0
+        # 仅当距上次 429 超过窗口期时重置连续计数
+        # 避免单次成功立刻冲掉指数退避状态
+        now = time.time()
+        if now - self._last_429_ts > self._429_reset_window:
+            self.consecutive_429_count = 0
+            self._last_429_ts = 0
+
+    def set_100001_handler(self, handler: Callable[[], None] | None) -> None:
+        self._handle_100001 = handler
+
+    def handle_100001(self, err: int) -> bool:
+        if err != 100001 or self._handle_100001 is None:
+            return False
+        loguru.logger.warning("错误码 100001，执行维护逻辑")
+        self._handle_100001()
+        return True
+
+    def get(self, url, data=None, isJson=False):
+        return self._request("get", url, data=data, isJson=isJson)
+
+    def switch_proxy(self):
+        return self._rotate_proxy("手动切换代理")
+
+    def post(self, url, data=None, isJson=False):
+        return self._request("post", url, data=data, isJson=isJson)
+
+    def current_proxy_display(self) -> str:
+        return self.proxy_manager.current_proxy_display
+
+    def current_proxy_status(self) -> str:
+        return self.proxy_manager.current_proxy_status()
+
+    def proxy_pool_status(self) -> str:
+        return self.proxy_manager.proxy_pool_status()
+
+    def has_available_proxy(self) -> bool:
+        return self.proxy_manager.has_available_proxy()
+
+    def is_current_proxy_available(self) -> bool:
+        return self.proxy_manager.is_current_proxy_available()
+
+    def ensure_active_proxy(self) -> bool:
+        if not self.proxy_manager.ensure_current_available():
+            return False
+        self.proxy_manager.apply_to_session(self.session)
+        return True
+
+    def mark_current_proxy_failure(self, reason: str) -> bool:
+        return self.proxy_manager.mark_current_failure(reason)
+
+    def mark_current_proxy_success(self) -> None:
+        self.proxy_manager.mark_current_success()
+
+    def describe_non_json_response(
+        self, response: Response, body_limit: int = 300
+    ) -> str:
+        content_type = response.headers.get("Content-Type", "未知")
+        body = response.text or ""
+        body = body.replace("\r", "\\r").replace("\n", "\\n")
+        if len(body) > body_limit:
+            body = body[:body_limit] + "..."
+        if not body:
+            body = "<empty>"
+        return (
+            f"status={response.status_code}, "
+            f"content_type={content_type}, "
+            f"url={response.url}, "
+            f"body_preview={body}"
+        )
+
+    def _build_h2_client(self):
+        import httpx
+
+        proxies = self.session.proxies or {}
+        proxy = proxies.get("https") or proxies.get("http") or None
+        verify = (
+            self.session.verify
+            if isinstance(self.session.verify, (bool, str))
+            else True
+        )
+        return httpx.Client(
+            http2=True,
+            verify=verify,
+            proxy=proxy,
+            timeout=httpx.Timeout(**H2_TIMEOUT),
+            limits=httpx.Limits(**H2_LIMITS),
+            headers={
+                "accept": "*/*",
+                "accept-encoding": "gzip, deflate, br, zstd",
+                "connection": "keep-alive",
+                "user-agent": self.headers.get("user-agent", ""),
+            },
+        )
+
+    def prewarm_h2_connection(self, url: str) -> None:
+        import httpx
+
+        if self._h2_client is None:
+            self._h2_client = self._build_h2_client()
+        client = self._h2_client
+        client.headers["user-agent"] = self.headers.get("user-agent", "")
+        for cookie in self.cookieManager.get_cookies(force=True) or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if name and value is not None:
+                client.cookies.set(name, value, domain=".bilibili.com")
+        try:
+            client.head(url)
+        except httpx.HTTPError:
+            pass
+
+    def _h2_send(self, method: str, url, data=None, isJson=False):
+        if self._h2_client is None:
+            self._h2_client = self._build_h2_client()
+        client = self._h2_client
+        client.headers["user-agent"] = self.headers.get("user-agent", "")
+        for cookie in self.cookieManager.get_cookies(force=True) or []:
+            name = cookie.get("name")
+            value = cookie.get("value")
+            if name and value is not None:
+                client.cookies.set(name, value, domain=".bilibili.com")
+        if method.lower() == "post":
+            return (
+                client.post(url, json=data) if isJson else client.post(url, data=data)
+            )
+        return client.get(url, params=data)
+
+    def _send_with_h2_recovery(self, method: str, url, data=None, isJson=False):
+        import httpx
+
+        for attempt in range(2):
+            try:
+                return self._h2_send(method, url, data=data, isJson=isJson)
+            except httpx.TimeoutException as exc:
+                self._invalidate_h2_client()
+                if attempt >= 1:
+                    raise BiliConnectionError(
+                        "网络请求超时：服务器响应过慢，请稍后重试",
+                        cause=exc,
+                    ) from exc
+                loguru.logger.warning("HTTP 请求超时，已重建连接后重试: {}", exc)
+            except httpx.LocalProtocolError as exc:
+                self._invalidate_h2_client()
+                if attempt >= 1:
+                    raise BiliConnectionError(
+                        "网络连接异常：HTTP/2 连接已断开，重试后仍失败，请稍后再试",
+                        cause=exc,
+                    ) from exc
+                loguru.logger.warning("HTTP/2 连接状态异常，已重建连接后重试: {}", exc)
+
+    def _request(self, method: str, url, data=None, isJson=False):
+        response = self._send_with_h2_recovery(
+            method,
+            url,
+            data=data,
+            isJson=isJson,
+        )
+
+        if response.status_code in (412, 403):
+            self.request_count += 1
+            # 自动切换 Clash 节点
+            try:
+                from util.proxy.ClashSwitcher import switch_on_failure
+                switch_on_failure()
+            except Exception:
+                pass
+            raise BiliBlockedError(
+                f"IP 被风控(HTTP {response.status_code})",
+                response=response,
+            )
+        if response.status_code == 429:
+            self.consecutive_429_count += 1
+            self._last_429_ts = time.time()
+            raise BiliRateLimitError(
+                "请求被限流(HTTP 429)",
+                response=response,
+                consecutive_count=self.consecutive_429_count,
+            )
+
+        response.raise_for_status()
+        self.clear_request_count()
+        self.mark_current_proxy_success()
+        # 请求成功时记录 Clash 节点成功
+        try:
+            from util.proxy.ClashSwitcher import record_success
+            record_success()
+        except Exception:
+            pass
+        if response.json().get("msg", "") == "请先登录":
+            raise RuntimeError("当前未登录，请重新登陆")
+        return response
+
+    def get_request_name(self):
+        try:
+            if not self.cookieManager.have_cookies():
+                loguru.logger.warning("获取用户名失败，请重新登录")
+                return "未登录"
+            result = self.get("https://api.bilibili.com/x/web-interface/nav").json()
+            return result["data"]["uname"]
+        except Exception:
+            return "未登录"
