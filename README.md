@@ -1,6 +1,6 @@
 <div align="center">
   <img width="160" src="assets/icon.ico" alt="logo">
-  <h2>biliTickerBuy-mod</h1>
+  <h2>biliTickerBuy-mod</h2>
 
 <p>
   <a href="https://github.com/Cbabagit/biliTickerBuy-mod/releases">
@@ -14,7 +14,8 @@
   </a>
 </p>
 
-**基于 [mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) v2.15.13 的定制优化版本**  
+**此仓库为 [mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) 的改版**  
+在主仓库 [mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) v2.15.13 基础上定制优化  
 开源免费，B 站会员购辅助工具 — 激进抢票策略、429 退避、多实例协调
 
 </div>
@@ -81,7 +82,15 @@ python main.py
 
 ## 📖 完整文档
 
-详细使用方法请参阅上游的 [安装指南](./docs/installation.md) 或 [飞书文档](https://n1x87b5cqay.feishu.cn/wiki/Eg4xwt3Dbiah02k1WqOcVk2YnMd)。
+详细使用方法请参阅上游主仓库的 [安装指南](./docs/installation.md) 或 [飞书文档](https://n1x87b5cqay.feishu.cn/wiki/Eg4xwt3Dbiah02k1WqOcVk2YnMd)。
+
+## 🔗 相关仓库
+
+| 仓库 | 说明 |
+|------|------|
+| [mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) | **主仓库** — 本改版基于此项目 |
+| [mikumifa/biliTickerSkill](https://github.com/mikumifa/biliTickerSkill) | 上游相关工具 |
+| [mikumifa/biliTickerStorm](https://github.com/mikumifa/biliTickerStorm) | 上游相关工具 |
 
 ## ⚠️ 免责声明
 
@@ -89,8 +98,7 @@ python main.py
 
 ## 🙏 致谢
 
-- 上游项目：[mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) — 感谢原作者的开源贡献
-- 相关项目：[biliTickerSkill](https://github.com/mikumifa/biliTickerSkill)、[biliTickerStorm](https://github.com/mikumifa/biliTickerStorm)
+- 上游主仓库：[mikumifa/biliTickerBuy](https://github.com/mikumifa/biliTickerBuy) — 感谢原作者的出色工作与开源贡献
 
 ## ⭐️ Star History
 
