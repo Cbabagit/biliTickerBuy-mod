@@ -34,4 +34,7 @@ venv.bak/
 !app_cmd/config
 dist/
 biliTickerBuy.exe
+cookies.json.bak
+local_release/
+btb_tmp_config.json
 
