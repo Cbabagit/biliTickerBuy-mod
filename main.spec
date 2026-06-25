@@ -2,39 +2,42 @@
 
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all, copy_metadata
 
 datas = []
 datas.append(("assets/*", "assets"))
 datas.append(("pyproject.toml", "."))
-datas += collect_data_files("gradio_client")
-datas += collect_data_files("gradio")
-datas += collect_data_files("safehttpx")
-datas += collect_data_files("groovy")
+
+# Collect all data from heavy dependencies + certifi
+for pkg in ["gradio", "gradio_client", "safehttpx", "groovy"]:
+    datas += collect_data_files(pkg)
+datas += collect_data_files("certifi")
+datas += copy_metadata("certifi")
 
 project_root = os.path.abspath(".")
-hiddenimports = []
-hiddenimports += collect_submodules("app_cmd")
-hiddenimports += collect_submodules("h2")  # httpx HTTP/2 support
-hiddenimports += collect_submodules("task")
-hiddenimports += collect_submodules("tab")
-hiddenimports += collect_submodules("util")
-hiddenimports += collect_submodules("interface")
-hiddenimports += collect_submodules("cptoken")
 
-# 自动选择图标
-if sys.platform == "darwin":
-    icon_file = os.path.abspath("assets/icon.icns")
-    is_windowed = True  # 不会跳出命令行，直接进入webui，需要确保运行稳定
-    is_console = False  # 一般命令行应用
-elif sys.platform == "win32":
-    icon_file = os.path.abspath("assets/icon.ico")
-    is_windowed = False  # 需要在windows环境下测试以决定怎样启用
-    is_console = True  # 一般命令行应用
-else:
-    icon_file = None  # Linux/*BSD等其他系统默认设置为标准命令行程序
-    is_windowed = False
-    is_console = True
+# Force-collect all needed modules with full tree
+hiddenimports = []
+
+for pkg in [
+    "tyro", "starlette", "requests", "tinydb", "loguru",
+    "gradio", "ntplib", "playsound3", "qrcode", "httpx",
+    "yaml", "fastapi", "rich", "textual",
+]:
+    # Try collect_all first - includes binaries, datas and submodules
+    try:
+        pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
+        datas += pkg_datas
+        hiddenimports += pkg_hidden
+    except Exception:
+        hiddenimports.append(pkg)
+
+# Collect our package tree
+for mod in ["app_cmd", "task", "tab", "util", "interface", "cptoken"]:
+    hiddenimports += collect_submodules(mod)
+
+# httpx HTTP/2 support
+hiddenimports += collect_submodules("h2")
 
 a = Analysis(
     ["main.py"],
@@ -43,12 +46,13 @@ a = Analysis(
     datas=datas,
     hiddenimports=hiddenimports,
     module_collection_mode={
-        "gradio": "py",  # Collect gradio package as source .py files
-        "gradio_log": "py",  # Collect'
+        "gradio": "py",
+        "gradio_log": "py",
+        "loguru": "py",
     },
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[os.path.join(project_root, "ssl_runtime_hook.py")],
     excludes=[],
     noarchive=False,
 )
@@ -64,7 +68,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,  # UPX 会触发 Windows Defender 误报
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,
@@ -73,16 +77,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=icon_file if icon_file else None,
+    icon=os.path.abspath("assets/icon.ico") if os.path.exists("assets/icon.ico") else None,
 )
-
-# macOS构建`.app`应用
-# 运行后会构建两个应用，一个是不会跳出命令行的带icon的程序，另一个则是命令行应用，没有icon
-app = None
-if sys.platform == "darwin":
-    app = BUNDLE(
-        exe,
-        name="biliTickerBuy.app",
-        icon=icon_file,
-        bundle_identifier="com.mikumifa.bilitickerbuy",  # 标识符瞎编的，用的github地址，可以随便改
-    )
