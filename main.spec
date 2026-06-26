@@ -37,7 +37,17 @@ for mod in ["app_cmd", "task", "tab", "util", "interface", "cptoken"]:
     hiddenimports += collect_submodules(mod)
 
 # httpx HTTP/2 support
+# httpx HTTP/2 support — h2 + its dependencies
 hiddenimports += collect_submodules("h2")
+hiddenimports += collect_submodules("hpack")
+hiddenimports += collect_submodules("hyperframe")
+for pkg in ["h2", "hpack", "hyperframe"]:
+    try:
+        pkg_datas, pkg_binaries, pkg_hidden = collect_all(pkg)
+        datas += pkg_datas
+        hiddenimports += pkg_hidden
+    except Exception:
+        pass
 
 a = Analysis(
     ["main.py"],
