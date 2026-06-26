@@ -1024,6 +1024,8 @@ def buy_stream(config: BuyConfig):
                     content=f"bilibili会员购，请尽快前往订单中心付款: {detail}",
                 )
 
+                # ── 优化推送：先同步首发确保送达，再启动后台重试 ──
+                notifierManager.deliver_sync()
                 notifierManager.start_all()
 
                 yield emit(
@@ -1067,8 +1069,8 @@ def buy_stream(config: BuyConfig):
                     qr_gen.make(fit=True)
                     qr_gen_image = qr_gen.make_image()
                     qr_gen_image.show()  # type: ignore
-                # 让 Server酱/Bark/PushPlus 等渠道的 HTTP 请求有时间发完，否则会被掐断。
-                notifierManager.join_all(timeout=15)
+                # 等待后台推送线程完成（timeout=30s，足够 HTTP 请求带 timeout=10s + 缓冲）
+                notifierManager.join_all(timeout=30)
                 break
         except BiliBlockedError as e:
             # 412/403 — _request 里已经切了代理，finally 已调 _prepare_done()

@@ -4,7 +4,7 @@ import time
 
 import loguru
 import requests
-from util.notifer.Notifier import NotifierBase
+from util.notifer.Notifier import NotifierBase, HTTPDeliveryError
 
 # 维护所有运行中的通知线程
 _active_notification_threads = {}  # type: ignore
@@ -119,8 +119,12 @@ def send_message(server_url, content, title=None, username=None, password=None):
 
         # 发送纯文本内容
         response = requests.post(
-            server_url, headers=headers, data=content.encode("utf-8")
+            server_url, headers=headers, data=content.encode("utf-8"), timeout=10
         )
+        if response.status_code not in (200, 201, 202):
+            raise HTTPDeliveryError(
+                f"Ntfy HTTP {response.status_code}: {response.text[:200]}"
+            )
         loguru.logger.info(f"Ntfy消息发送成功，状态码: {response.status_code}")
         return response
     except Exception as e:

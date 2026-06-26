@@ -1,3 +1,12 @@
+"""
+推送器框架
+==========
+同步首发 + 后台重试策略：
+  1. send_first() — 同步发送一次（含重试），抢到票后必须确保至少有 1 次推送到达
+  2. run() — 后台线程做重复推送（Ntfy 等场景），作为补偿
+  3. 所有 HTTP 请求带 timeout，检查状态码
+"""
+
 from abc import ABC, abstractmethod
 import threading
 import loguru
@@ -6,23 +15,18 @@ import time
 from app_cmd.config.NotifierConfig import NotifierConfig
 
 
+class HTTPDeliveryError(Exception):
+    """发送成功但服务器返回非 2xx 状态码"""
+    pass
+
+
 class NotifierBase(ABC):
     """推送器基类。
 
-    默认实现的 :py:meth:`run` 逻辑 **成功发送一次** 消息便退出；如果需要 *重复推送*（如
-    `ntfy` 的持续提醒场景），应当在子类自行覆写 ``run`` 或 ``send_message`` 逻辑。
-
-    Attributes
-    ----------
-    title : str
-        推送标题。
-    content : str
-        推送正文。
-    interval_seconds : int
-        默认实现中，当 ``send_message`` 抛异常时的**重试间隔**；
-        若子类覆写为循环推送模式，它也可作为每次循环发送的间隔。
-    duration_minutes : int
-        允许持续推送的总时长，默认 10 分钟。
+    修改要点（修复不推送 bug）：
+    - send_message() 子类必须带 timeout + 检查 HTTP 响应状态码
+    - send_first() 同步重试至多 3 次，确保首发到达
+    - run() 后台线程持续推送，为重复推送场景保留
     """
 
     def __init__(
@@ -30,7 +34,7 @@ class NotifierBase(ABC):
         title: str,
         content: str,
         interval_seconds=10,
-        duration_minutes=10,  # B站订单保存上限
+        duration_minutes=10,
     ):
         super().__init__()
         self.title = title
@@ -39,30 +43,76 @@ class NotifierBase(ABC):
         self.duration_minutes = duration_minutes
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self.run, daemon=True)
+        self._last_delivered: bool = False  # True = 至少一次成功发送
+
+    # ── 同步首发（保证至少一次送达）──
+
+    def send_first(self) -> bool:
+        """同步发送，最多重试 3 次（指数退避），保证至少一次送达。
+        返回 True 表示成功，False 表示所有重试均失败。
+        """
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                self.send_message(self.title, self.content)
+                self._last_delivered = True
+                loguru.logger.info(
+                    f"[推送:{type(self).__name__}] 首发成功 (attempt={attempt})"
+                )
+                return True
+            except Exception as e:
+                last_error = e
+                loguru.logger.error(
+                    f"[推送:{type(self).__name__}] 发送失败 (attempt={attempt}): {e}"
+                )
+                if attempt < 3:
+                    time.sleep(attempt * 2)  # 2s, 4s
+        loguru.logger.error(
+            f"[推送:{type(self).__name__}] 首发失败（3次重试用完）: {last_error}"
+        )
+        return False
+
+    # ── 后台重复推送 ──
 
     def run(self):
-        """线程运行函数，实现间隔发送通知"""
+        """线程运行函数 — 后台重复推送（持续时间窗口内）。
+        send_first() 已经保证至少 1 次送达，后台线程做额外补偿。
+        """
         start_time = time.time()
         end_time = start_time + (self.duration_minutes * 60)
         count = 0
 
         while time.time() < end_time and not self.stop_event.is_set():
             try:
-                # 构建消息内容，包含剩余时间
+                count += 1
                 remaining_minutes = int((end_time - time.time()) / 60)
                 remaining_seconds = int((end_time - time.time()) % 60)
-                message = f"{self.content} [#{count}, 剩余 {remaining_minutes}分{remaining_seconds}秒]"
-
-                # 使用send_message方法发送
+                message = (
+                    f"{self.content} [#{count}, 剩余 {remaining_minutes}分{remaining_seconds}秒]"
+                )
                 self.send_message(self.title, message)
-                # 确认发送成功后停止发送
+                loguru.logger.info(
+                    f"[推送:{type(self).__name__}] 后台推送 #{count} 成功"
+                )
+                # 已成功发送过一次，后台重复推送正常退出即可
+                self._last_delivered = True
                 break
-
             except Exception as e:
-                loguru.logger.error(f"通知发送失败: {e}")
-                time.sleep(self.interval_seconds)  # 发生错误时等待重试
+                loguru.logger.error(
+                    f"[推送:{type(self).__name__}] 后台推送 #{count} 失败: {e}"
+                )
+                time.sleep(self.interval_seconds)
 
-        loguru.logger.info("通知发送成功")
+        if count == 0:
+            loguru.logger.warning(
+                f"[推送:{type(self).__name__}] 后台线程未发送任何消息"
+            )
+        else:
+            loguru.logger.info(
+                f"[推送:{type(self).__name__}] 后台推送结束，共发送 {count} 条"
+            )
+
+    # ── 生命周期 ──
 
     def start(self):
         if not self.thread.is_alive():
@@ -74,9 +124,17 @@ class NotifierBase(ABC):
         self.stop_event.set()
         self.thread.join(timeout=3)
 
+    @property
+    def is_delivered(self) -> bool:
+        return self._last_delivered
+
+    # ── 子类必须实现 ──
+
     @abstractmethod
     def send_message(self, title, message):
-        """用于发送消息，子类必须实现此方法发送推送消息"""
+        """发送一次推送消息。
+        必须带 HTTP timeout，必须检查响应状态码（非 2xx 抛 HTTPDeliveryError）。
+        """
         pass
 
 
@@ -85,14 +143,6 @@ class NotifierManager:
         self.notifier_dict: dict[str, NotifierBase] = {}
 
     def register_notifier(self, name: str, notifier: NotifierBase):
-        """注册推送器到管理器中。
-
-        Args:
-            name (str): 推送器名称（唯一键）。
-            notifier (NotifierBase): 推送器实例。
-
-        注意：如果 *name* 已存在，将记录错误并忽略本次注册。
-        """
         if name in self.notifier_dict:
             loguru.logger.error(f"推送器添加失败: 已存在名为{name}的推送器")
         else:
@@ -100,47 +150,74 @@ class NotifierManager:
             loguru.logger.info(f"成功添加推送器: {name}")
 
     def remove_notifier(self, name: str):
-        """从管理器中移除指定名称的推送器。"""
         if name not in self.notifier_dict:
             loguru.logger.error(f"推送器删除失败: 不存在名为{name}的推送器")
         else:
             self.notifier_dict.pop(name)
             loguru.logger.info(f"成功删除推送器: {name}")
 
-    def start_all(self):
-        for notifer in self.notifier_dict.values():
-            notifer.start()
+    # ── 核心改进：同步首发 + 后台重试 ──
 
-    def join_all(self, timeout: float = 15.0):
-        """等待所有推送线程结束（或超时）。
+    def deliver_sync(self) -> bool:
+        """同步发送所有推送器，重试确保送达。返回 True 表示至少一个渠道成功。"""
+        any_ok = False
+        for name, notifier in self.notifier_dict.items():
+            loguru.logger.info(f"[推送] {name}: 同步首发...")
+            ok = notifier.send_first()
+            if ok:
+                any_ok = True
+                loguru.logger.info(f"[推送] {name}: 首发成功 ✓")
+            else:
+                loguru.logger.error(f"[推送] {name}: 首发失败 ✗")
+        return any_ok
 
-        推送线程是 daemon 线程，解释器退出时不会等待它们完成后再退出。
-        抢票成功后，如果不在退出前 join，CLI 进程会立刻结束，HTTP 推送请求会被中断，导致 Server酱/Bark/PushPlus 等渠道收不到通知。
-        此方法给推送线程一个完成窗口。
+    def deliver_and_keep_alive(self, join_timeout: float = 30.0) -> bool:
+        """先同步首发，再启动后台线程，最后 join 等待线程结束。
+        返回 True 表示至少一个渠道同步发送成功。
         """
-        for notifer in self.notifier_dict.values():
-            notifer.thread.join(timeout=timeout)
+        # 1) 同步首发（确保至少一次送达）
+        any_ok = self.deliver_sync()
+
+        # 2) 启动后台重复推送线程（补偿 / Ntfy 等）
+        self.start_all()
+
+        # 3) 等待线程完成
+        self.join_all(timeout=join_timeout)
+
+        return any_ok
+
+    # ── 旧 API 保留兼容 ──
+
+    def start_all(self):
+        for notifier in self.notifier_dict.values():
+            notifier.start()
+
+    def join_all(self, timeout: float = 30.0):
+        """等待所有推送线程结束。
+        timeout 默认 30s（足够 HTTP 请求带 timeout=10 完成 + 一些缓冲）。
+        """
+        for notifier in self.notifier_dict.values():
+            notifier.thread.join(timeout=timeout)
 
     def stop_all(self):
-        for notifer in self.notifier_dict.values():
-            notifer.stop()
+        for notifier in self.notifier_dict.values():
+            notifier.stop()
 
     def start_notifier(self, name: str):
-        notifer = self.notifier_dict.get(name)
-        if notifer:
-            notifer.start()
+        notifier = self.notifier_dict.get(name)
+        if notifier:
+            notifier.start()
         else:
             loguru.logger.error(f"推送器启动失败: 不存在名为{name}的推送器")
 
     def stop_notifier(self, name: str):
-        notifer = self.notifier_dict.get(name)
-        if notifer:
-            notifer.stop()
+        notifier = self.notifier_dict.get(name)
+        if notifier:
+            notifier.stop()
         else:
             loguru.logger.error(f"推送器停止失败: 不存在名为{name}的推送器")
 
     def list_notifiers(self):
-        """返回当前已注册的推送器名称列表。"""
         return list(self.notifier_dict.keys())
 
     @staticmethod
@@ -152,7 +229,7 @@ class NotifierManager:
         duration_minutes: int = 10,
         include_audio: bool = True,
     ) -> "NotifierManager":
-        """通过配置创建NotifierManager，统一的工厂方法"""
+        """通过配置创建NotifierManager"""
         manager = NotifierManager()
 
         # ServerChan Turbo
@@ -287,11 +364,9 @@ class NotifierManager:
 
     @staticmethod
     def test_all_notifiers(include_audio: bool = True) -> str:
-        """测试所有已配置的推送渠道"""
         config = NotifierConfig.from_config_db()
         results = []
 
-        # 使用统一的工厂方法创建测试管理器
         test_manager = NotifierManager.create_from_config(
             config=config,
             title="抢票提醒",
@@ -299,10 +374,9 @@ class NotifierManager:
             include_audio=include_audio,
         )
 
-        # 测试每个已配置的推送渠道
         test_cases = [
-            ("ServerChanTurbo", config.serverchan_key, "Server酱ᵀᵘʳᵇᵒ"),
-            ("ServerChan3", config.serverchan3_api_url, "Server酱³"),
+            ("ServerChanTurbo", config.serverchan_key, "Server酱Turbo"),
+            ("ServerChan3", config.serverchan3_api_url, "Server酱3"),
             ("PushPlus", config.pushplus_token, "PushPlus"),
             ("Bark", config.bark_token, "Bark"),
             ("Ntfy", config.ntfy_url, "Ntfy"),
@@ -324,7 +398,7 @@ class NotifierManager:
                     )
                     results.append(f"✅ {display_name}: 测试推送已发送")
                 except Exception as e:
-                    results.append(f"❌ {display_name}: 推送失败 - {str(e)}")
+                    results.append(f"❌ {display_name}: 推送失败 -> {e}")
             else:
                 results.append(f"❌ {display_name}: 创建失败")
 

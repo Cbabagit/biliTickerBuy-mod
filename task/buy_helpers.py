@@ -250,7 +250,7 @@ def notify_proxy_exhausted(
         content=build_proxy_exhausted_message(_request, delay_seconds),
         include_audio=False,
     )
-    manager.start_all()
+    manager.deliver_sync()
 
 
 def handle_proxy_failure(

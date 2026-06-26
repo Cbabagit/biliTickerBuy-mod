@@ -2,7 +2,7 @@ import json
 import requests
 
 from urllib.parse import urlparse
-from util.notifer.Notifier import NotifierBase
+from util.notifer.Notifier import NotifierBase, HTTPDeliveryError
 
 
 class BarkNotifier(NotifierBase):
@@ -13,19 +13,18 @@ class BarkNotifier(NotifierBase):
     def send_message(self, title, message):
         headers = {"Content-Type": "application/json"}
         data = {
-            "icon": "https://raw.githubusercontent.com/mikumifa/biliTickerBuy/refs/heads/main/assets/icon.ico",  # 推送LOGO
+            "icon": "https://raw.githubusercontent.com/mikumifa/biliTickerBuy/refs/heads/main/assets/icon.ico",
             "group": "biliTickerBuy",
-            "url": "https://mall.bilibili.com/neul/index.html?page=box_me&noTitleBar=1",  # 跳转会员购链接
-            "sound": "telegraph",  # 警告铃声
-            "level": "critical",  # 重要警告
+            "url": "https://mall.bilibili.com/neul/index.html?page=box_me&noTitleBar=1",
+            "sound": "telegraph",
+            "level": "critical",
             "volume": "10",
         }
-        if isinstance(self.token, str) and urlparse(self.token).scheme in {
-            "http",
-            "https",
-        }:
+        if isinstance(self.token, str) and urlparse(self.token).scheme in {"http", "https"}:
             url = f"{self.token.rstrip('/')}/{title}/{message}"
         else:
             url = f"https://api.day.app/{self.token}/{title}/{message}"
 
-        requests.post(url, headers=headers, data=json.dumps(data))
+        resp = requests.post(url, headers=headers, data=json.dumps(data), timeout=10)
+        if resp.status_code not in (200, 201, 202):
+            raise HTTPDeliveryError(f"Bark HTTP {resp.status_code}: {resp.text[:200]}")

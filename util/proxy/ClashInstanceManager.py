@@ -76,104 +76,21 @@ MASTER_API_HOST = (
 )
 
 
-def _get_latency_ranked_nodes() -> list[tuple[str, int]]:
-    """从主实例（VergeRev）获取节点延迟排名
-    返回 [(节点名, 延迟ms), ...] 按延迟升序排列
-    """
-    try:
-        req = urllib.request.Request(
-            f"http://{MASTER_API_HOST}/proxies",
-            headers={"Authorization": f"Bearer {SECRET}"},
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-
-        ranked = []
-        for name, proxy in data.get("proxies", {}).items():
-            ptype = proxy.get("type", "")
-            if ptype in (
-                "Selector",
-                "URLTest",
-                "Fallback",
-                "Direct",
-                "Reject",
-                "RejectDrop",
-                "Compatible",
-                "Pass",
-            ):
-                continue
-            alive = proxy.get("alive", False)
-            delay = 9999
-            if alive:
-                try:
-                    hist = proxy.get("extra", {}).get("history", [])
-                    if hist:
-                        delay = int(hist[-1]["delay"])
-                except (IndexError, KeyError, ValueError, TypeError):
-                    delay = 9999
-            ranked.append((name, delay, alive))
-
-        # 按 alive + 延迟排序
-        ranked.sort(key=lambda x: (not x[2], x[1]))
-        return [(n, d) for n, d, a in ranked]
-
-    except Exception as e:
-        logger.warning(f"[ClashInstance] 无法从主实例获取延迟排名: {e}")
-        # fallback: 按配置顺序返回
-        return [(n, 9999) for n in _get_real_proxy_names()]
 
 
-# ── 地区偏好权重（与 ClashSwitcher 保持一致）──
-_INSTANCE_REGION_BONUS = {
-    "香港": 15,
-    "澳门": 15,
-    "韩国": 10,
-    "日本": 10,
-    "新加坡": 8,
-    "台湾": 12,
-}
 
-
-def _extract_region(node: str) -> str | None:
-    """从节点名提取地区"""
-    regions = {
-        "日本": ["日本", "东京", "大阪", "樱花"],
-        "香港": ["香港", "HKT", "CMI"],
-        "韩国": ["韩国", "首尔", "SK"],
-        "新加坡": ["新加坡", "SG", "GTT"],
-        "美国": ["美国", "洛杉矶", "硅谷", "圣何塞"],
-        "台湾": ["台湾", "台北"],
-        "英国": ["英国", "伦敦"],
-        "德国": ["德国", "法兰克福"],
-        "法国": ["法国", "巴黎"],
-        "澳门": ["澳门"],
-        "泰国": ["泰国", "曼谷"],
-        "越南": ["越南", "河内"],
-        "俄罗斯": ["俄罗斯", "莫斯科"],
-    }
-    for region, keywords in regions.items():
-        for kw in keywords:
-            if kw in node:
-                return region
-    return None
-
-
-def _score_node_for_assignment(node_name: str, delay: int) -> float:
-    """给节点打分用于初始分配（只考虑延迟 + 地区偏好）"""
-    # 延迟评分 (0-60)：延迟越低分越高
-    delay_score = max(0.0, 60.0 - 60.0 * (delay / 5000.0))
-    # 地区偏好加分 (0-15)
-    region = _extract_region(node_name)
-    bonus = _INSTANCE_REGION_BONUS.get(region, 0) if region else 0
-    return round(delay_score + bonus, 1)
+# B站 ping 测试地址（轻量端点）
+BILIBILI_PING_URL = "https://api.bilibili.com/x/web-interface/online"
 
 
 def _live_filter_nodes(candidates: list[str], need: int) -> list[str]:
     """
-    通过主实例 API 对候选节点做实时延迟测试，返回可达且延迟低的节点。
-    并发测试所有候选节点，只保留 2000ms 内响应的节点，按延迟升序排列。
+    通过主实例 API 对候选节点做实时 B站 延迟测试，返回可达节点按延迟排序。
+    使用 heapq.nsmallest(need) 替代全量 sort，O(n log need) 空间 O(n)。
+    并发测试所有候选节点，只保留 5000ms 内响应的节点。
     """
     import concurrent.futures
+    import heapq
     import urllib.parse
 
     results: dict[str, int | None] = {}
@@ -183,12 +100,12 @@ def _live_filter_nodes(candidates: list[str], need: int) -> list[str]:
             enc = urllib.parse.quote(name, safe="")
             url = (
                 f"http://{MASTER_API_HOST}/proxies/{enc}/delay"
-                f"?timeout=5000&url=http://www.gstatic.com/generate_204"
+                f"?timeout=8000&url={urllib.parse.quote(BILIBILI_PING_URL, safe='')}"
             )
             req = urllib.request.Request(
                 url, headers={"Authorization": f"Bearer {SECRET}"}
             )
-            with urllib.request.urlopen(req, timeout=6) as resp:
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
                 d = data.get("delay", 9999)
                 return name, d if d < 9999 else None
@@ -197,7 +114,7 @@ def _live_filter_nodes(candidates: list[str], need: int) -> list[str]:
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=need + 2) as pool:
         fs = {pool.submit(_test, n): n for n in candidates}
-        concurrent.futures.wait(fs.keys(), timeout=8)
+        concurrent.futures.wait(fs.keys(), timeout=12)
         for f in fs:
             try:
                 n, d = f.result(timeout=0)
@@ -205,58 +122,48 @@ def _live_filter_nodes(candidates: list[str], need: int) -> list[str]:
             except Exception:
                 results[fs[f]] = None
 
-    # 分离可达和不可达节点，可达的按延迟升序
-    alive = [(n, d) for n, d in results.items() if d is not None and d <= 2000]
-    alive.sort(key=lambda x: x[1])
-    slow_or_dead = [n for n, d in results.items() if d is None or d > 2000]
+    # 用 heapq.nsmallest 替代全量 sort：O(n log need) 而非 O(n log n)
+    alive_all = [(n, d) for n, d in results.items() if d is not None and d <= 5000]
+    alive = heapq.nsmallest(need, alive_all, key=lambda x: x[1])
+    slow_or_dead = [n for n, d in results.items() if d is None or d > 5000]
 
     if len(alive) < need:
         logger.warning(
-            f"[ClashInstance] 实时延迟测试: 仅 {len(alive)} 个可用 (≤2000ms), {len(slow_or_dead)} 个超时/不可达, 可用数不足 {need}"
+            f"[ClashInstance] B站 延迟测试: 仅 {len(alive_all)} 个可用 (≤5000ms), {len(slow_or_dead)} 个超时/不可达, 可用数不足 {need}"
         )
     else:
         logger.info(
-            f"[ClashInstance] 实时延迟测试: {len(alive)} 个可用 (≤2000ms), {len(slow_or_dead)} 个超时/不可达"
+            f"[ClashInstance] B站 延迟测试: {len(alive_all)} 个可用 (≤5000ms), {len(slow_or_dead)} 个超时/不可达"
         )
     for n, d in alive[:5]:
         logger.debug(f"    {n}: {d}ms")
-    # 只返回实时可达的节点，超时的直接丢弃
+    # 只返回 top need 个节点
     return [n for n, _ in alive]
 
 
 def _assign_nodes(count: int) -> dict[int, str]:
     """为 N 个实例分配不同的最优节点
-    使用综合评分（延迟 + 地区偏好）排序，每个实例分到不同的最高分节点
-    返回 {instance_id: node_name}
-    评分最高 → 实例1，次高 → 实例2，依此类推
+    按 B站 实时 ping 延迟升序排列，每个实例分到不同的最低延迟节点。
+    最低延迟 → 实例1，次低 → 实例2，依此类推。
+    无评分，无地区偏好，纯延迟排序。
     """
-    ranked = _get_latency_ranked_nodes()  # [(name, delay), ...]
     real_names = _get_real_proxy_names()
-    real_ranked = [(n, d) for n, d in ranked if n in real_names]
 
-    if not real_ranked:
+    if not real_names:
         logger.warning("[ClashInstance] 没有可用的节点进行分配")
-        real_ranked = [(n, 9999) for n in real_names[:count]]
+        return {}
 
-    # 按综合评分排序（降序）
-    scored = [(_score_node_for_assignment(n, d), n, d) for n, d in real_ranked]
-    scored.sort(key=lambda x: (-x[0], x[2]))  # 评分降序，同分按延迟升序
+    logger.info(f"[ClashInstance] 对 {len(real_names)} 个节点进行 B站 实时延迟测试...")
+    verified = _live_filter_nodes(real_names, count)
 
-    if len(scored) < count:
-        logger.warning(
-            f"[ClashInstance] 节点数 ({len(scored)}) < 实例数 ({count})，部分实例会共用节点"
-        )
-
-    # 取评分前 count×2+2 个候选节点做实时延迟验证
-    candidates = [s[1] for s in scored[: min(count * 2 + 2, len(scored))]]
-    logger.info(f"[ClashInstance] 对 {len(candidates)} 个候选节点进行实时延迟测试...")
-    verified = _live_filter_nodes(candidates, count)
+    if not verified:
+        logger.error("[ClashInstance] B站 延迟测试后无可用节点，无法分配")
+        return {}
 
     if len(verified) < count:
         logger.warning(
-            f"[ClashInstance] 实时测试后可用节点 ({len(verified)}) < 实例数 ({count})，仅分配前 {len(verified)} 个实例，后面跳过"
+            f"[ClashInstance] B站 延迟测试后可用节点 ({len(verified)}) < 实例数 ({count})，仅分配前 {len(verified)} 个实例"
         )
-        # 不可用节点不补位：宁可少实例，也不给不可用节点
         count = len(verified)
 
     assignments = {}
@@ -264,25 +171,12 @@ def _assign_nodes(count: int) -> dict[int, str]:
         assignments[i] = verified[i - 1]
 
     logger.info(
-        f"[ClashInstance] 节点分配完成: {len(assignments)} 个实例（评分 + 实时延迟验证，超时节点已丢弃）"
+        f"[ClashInstance] 节点分配完成: {len(assignments)} 个实例（B站 ping 延迟排序）"
     )
     for i, node in assignments.items():
-        delay = _get_node_delay(node, scored)
-        score = _score_node_for_assignment(node, delay)
-        alive_tag = "🟢" if delay < 9999 else "🔴"
-        logger.info(
-            f"  Instance {i} -> {node} (评分 {score}, 延迟 {delay}ms) {alive_tag}"
-        )
+        logger.info(f"  Instance {i} -> {node}")
 
     return assignments
-
-
-def _get_node_delay(node_name: str, scored_list: list) -> int:
-    """从 scored list 中查找节点的延迟"""
-    for _, n, d in scored_list:
-        if n == node_name:
-            return d
-    return 9999
 
 
 def _get_proxies_from_profile() -> list[dict]:
@@ -321,16 +215,12 @@ def _reorder_proxies(proxies: list[dict], assigned_node: str | None) -> list[dic
     """把指定节点排到列表最前面，实现 Clash 自动预选该节点"""
     if not assigned_node:
         return proxies
-    ordered = []
-    assigned = None
-    for p in proxies:
-        if p["name"] == assigned_node:
-            assigned = p
-        else:
-            ordered.append(p)
-    if assigned:
-        ordered.insert(0, assigned)
-    return ordered
+    # O(1) 构建：assigned 放首位，avoid insert(0) O(n) 移位
+    assigned = next((p for p in proxies if p["name"] == assigned_node), None)
+    if not assigned:
+        return proxies
+    others = [p for p in proxies if p["name"] != assigned_node]
+    return [assigned] + others
 
 
 def generate_child_config(instance_id: int, assigned_node: str | None = None) -> dict:
