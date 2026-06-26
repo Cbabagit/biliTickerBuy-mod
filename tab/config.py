@@ -343,6 +343,36 @@ def go_settings_tab(header_ui):
             outputs=component,
         )
 
+    # ── 子实例状态辅助函数（从 Clash tab 复用） ──
+    CFG_AUTO_CHILD = "clash.auto_switch_child"
+
+    def _get_auto_toggle(key: str) -> bool:
+        val = ConfigDB.get(key)
+        return val == "1" if val is not None else True
+
+    def _build_instance_table_adv():
+        try:
+            from tab.clash import _build_instance_table
+            return _build_instance_table()
+        except ImportError:
+            return '<div class="btb-card-note">⚠️ Clash 模块未加载</div>'
+
+    def _get_auto_child_adv() -> bool:
+        return _get_auto_toggle(CFG_AUTO_CHILD)
+
+    def _toggle_auto_child_adv(enabled: bool) -> str:
+        ConfigDB.insert(CFG_AUTO_CHILD, "1" if enabled else "0")
+        return "✅ 子实例自动切换" + (" 已启用" if enabled else " 已禁用")
+
+    def _get_auto_switch_status_adv():
+        try:
+            from tab.clash import get_auto_switch_status
+            return get_auto_switch_status()
+        except ImportError:
+            return "⚠️ ClashSwitcher 未加载"
+
+    auto_child_default_adv = _get_auto_child_adv()
+
     with gr.Column(elem_classes="btb-page-section"):
         with gr.Tabs(elem_classes="btb-top-tabs"):
             with gr.Tab("请求"):
@@ -537,6 +567,34 @@ def go_settings_tab(header_ui):
                         value=buy_defaults.notifier_config.notify_proxy_exhausted,
                         info="开启后，所有代理都冷却时会推送通知。",
                     )
+
+                    gr.Markdown("---")
+                    gr.Markdown("## 🚀 子实例状态")
+                    gr.Markdown(
+                        "每个 Worker 抢票进程自动分配独立 Clash 子实例，实现 IP 隔离。"
+                    )
+                    with gr.Row():
+                        auto_child_toggle_adv = gr.Checkbox(
+                            label="⚡ 子实例自动切换",
+                            value=auto_child_default_adv,
+                            info="子实例失败时自动切换到未被占用的最优节点",
+                            scale=1,
+                        )
+                        auto_child_status_adv = gr.Textbox(
+                            label="", value="", interactive=False, scale=2
+                        )
+                    with gr.Row(elem_classes="btb-inline-actions !justify-start"):
+                        refresh_inst_adv_btn = gr.Button(
+                            "🔄 刷新子实例", variant="secondary", scale=0, min_width=120
+                        )
+                        refresh_auto_adv_btn = gr.Button(
+                            "⚡ 刷新切换状态", variant="secondary", scale=0, min_width=140
+                        )
+                    inst_table_adv = gr.HTML(
+                        '<span class="btb-card-note">点击「刷新子实例」查看当前状态</span>',
+                        elem_id="btb-instance-table-adv",
+                    )
+                    auto_status_adv = gr.Markdown("点击「刷新切换状态」查看")
 
             with gr.Tab("通知"):
                 with gr.Column(elem_classes="btb-card btb-layout-card"):
@@ -839,6 +897,27 @@ def go_settings_tab(header_ui):
         rate_limit_backoff_max_ms_ui,
         update_backoff_max_ms,
     )
+    # ── 代理 tab 子实例刷新 ──
+    refresh_inst_adv_btn.click(
+        fn=_build_instance_table_adv,
+        inputs=[],
+        outputs=inst_table_adv,
+    )
+
+    # ── 代理 tab 子实例自动切换 ──
+    auto_child_toggle_adv.change(
+        fn=_toggle_auto_child_adv,
+        inputs=auto_child_toggle_adv,
+        outputs=auto_child_status_adv,
+    )
+
+    # ── 代理 tab 自动切换状态刷新 ──
+    refresh_auto_adv_btn.click(
+        fn=_get_auto_switch_status_adv,
+        inputs=[],
+        outputs=auto_status_adv,
+    )
+
     test_audio_button.click(
         fn=test_terminal_audio,
         inputs=[],
@@ -910,6 +989,11 @@ def go_settings_tab(header_ui):
                     "rateLimitBackoffMaxMs", RATE_LIMIT_BACKOFF_MAX_MS
                 )
             ),
+            # 子实例状态（代理 tab）
+            gr.update(value=_get_auto_child_adv()),
+            gr.update(value=""),
+            gr.update(value=_build_instance_table_adv()),
+            gr.update(value=_get_auto_switch_status_adv()),
         ]
 
     return load_go_settings_configs, [
@@ -949,4 +1033,9 @@ def go_settings_tab(header_ui):
         shared_state_enabled_ui,
         rate_limit_backoff_base_ms_ui,
         rate_limit_backoff_max_ms_ui,
+        # 子实例状态（代理 tab）
+        auto_child_toggle_adv,
+        auto_child_status_adv,
+        inst_table_adv,
+        auto_status_adv,
     ]
