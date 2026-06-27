@@ -643,7 +643,7 @@ def buy_stream(config: BuyConfig):
                         yield emit(
                             "attempt",
                             (
-                                f"{e}，延迟 {rate_limit_delay_ms}ms 后继续"
+                                f"{e}，延迟 {rate_limit_delay_ms}ms (+/-30% 抖动) 后继续"
                                 if rate_limit_delay_ms > 0
                                 else str(e)
                             ),
@@ -653,7 +653,7 @@ def buy_stream(config: BuyConfig):
                             ),
                         )
                         if rate_limit_delay_ms > 0:
-                            time.sleep(rate_limit_delay_ms / 1000)
+                            time.sleep(_jittered_delay_ms(rate_limit_delay_ms))
                         continue  # 不需要sleep
                     except RequestException as e:
                         retry_outcome.set_exception(e)
@@ -700,7 +700,7 @@ def buy_stream(config: BuyConfig):
                                 logger.warning(f"循环内项目详情复检失败（忽略）：{exc}")
                             _reset_refresh_counter()
                     if should_sleep_before_next_attempt:
-                        time.sleep(request_interval / 1000)
+                        time.sleep(_jittered_delay_ms(request_interval))
 
                 if (
                     result is not None
@@ -829,13 +829,13 @@ def buy_stream(config: BuyConfig):
             yield emit(
                 "error",
                 (
-                    f"{e}，延迟 {rate_limit_delay_ms}ms 后重试准备订单"
+                    f"{e}，延迟 {rate_limit_delay_ms}ms (+/-30% 抖动) 后重试准备订单"
                     if rate_limit_delay_ms > 0
                     else str(e)
                 ),
             )
             if rate_limit_delay_ms > 0:
-                time.sleep(rate_limit_delay_ms / 1000)
+                time.sleep(_jittered_delay_ms(rate_limit_delay_ms))
             yield emit_reprepare("订单准备阶段触发 HTTP 429")
         except BiliConnectionError as e:
             logger.warning(str(e))
