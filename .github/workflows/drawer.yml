@@ -1,0 +1,367 @@
+name: Release Drafter
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  update_release_draft:
+    outputs:
+      tag_name: ${{ steps.drafter.outputs.tag_name }}
+    permissions:
+      contents: write
+      pull-requests: write
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - id: drafter
+        uses: release-drafter/release-drafter@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update contributors README
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: akhilmhdh/contributors-readme-action@v2.3.10
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+  build_and_upload_draft_assets:
+    name: Build Draft Assets
+    needs: update_release_draft
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.update_release_draft.outputs.tag_name != ''
+    permissions:
+      contents: write
+
+    runs-on: ${{ matrix.config.os.name }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - os:
+              name: ubuntu-22.04
+              filename: linux_amd64
+          - os:
+              name: ubuntu-22.04-arm
+              filename: linux_arm64
+          - os:
+              name: macos-14
+              filename: macos_arm64
+          - os:
+              name: macos-15-intel
+              filename: macos_intel
+          - os:
+              name: windows-latest
+              filename: windows_amd64
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+          cache: "pip"
+
+      - name: Upgrade setuptools, wheel, and install requirements
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install pyinstaller~=6.20.0
+          pip install -r requirements.txt
+
+      - name: Build PyInstaller
+        shell: bash
+        run: |
+          pyinstaller main.spec
+
+      - name: Stage updater scripts
+        shell: bash
+        run: |
+          RELEASE_DIR="release/biliTickerBuy"
+          mkdir -p "$RELEASE_DIR"
+
+          if [ "${{ matrix.config.os.filename }}" = "windows_amd64" ]; then
+            cp dist/biliTickerBuy.exe "$RELEASE_DIR/biliTickerBuy.exe"
+            cp assets/updater/update.bat "$RELEASE_DIR/update.bat"
+          elif [[ "${{ matrix.config.os.filename }}" == macos_* ]]; then
+            # Avoid duplicating the .app bundle before DMG creation.
+            mv dist/biliTickerBuy.app "$RELEASE_DIR/biliTickerBuy.app"
+            cp assets/updater/update.sh "$RELEASE_DIR/update.sh"
+            chmod +x "$RELEASE_DIR/update.sh"
+          else
+            cp dist/biliTickerBuy "$RELEASE_DIR/biliTickerBuy"
+            cp assets/updater/update.sh "$RELEASE_DIR/update.sh"
+            chmod +x "$RELEASE_DIR/biliTickerBuy"
+            chmod +x "$RELEASE_DIR/update.sh"
+          fi
+
+          cp assets/updater/.env.install "$RELEASE_DIR/.env.install"
+
+      - name: Zip the Build-windows
+        if: matrix.config.os.filename == 'windows_amd64'
+        shell: pwsh
+        run: |
+          $releaseDir = "./release/biliTickerBuy"
+          Compress-Archive `
+            -Path "$releaseDir/biliTickerBuy.exe",
+                  "$releaseDir/update.bat",
+                  "$releaseDir/.env.install" `
+            -DestinationPath "./tmp.zip" `
+            -Force
+
+      - name: Zip the Build-linux
+        if: matrix.config.os.filename != 'windows_amd64' && !startsWith(matrix.config.os.filename, 'macos_')
+        shell: bash
+        run: |
+          cd ./dist
+          zip -r ../tmp.zip biliTickerBuy
+
+      - name: Zip the Build-macos-cli
+        if: startsWith(matrix.config.os.filename, 'macos_')
+        shell: bash
+        run: |
+          cd ./dist
+          zip -r ../tmp-macos-cli.zip biliTickerBuy
+
+      - name: Build DMG-macos
+        if: startsWith(matrix.config.os.filename, 'macos_')
+        shell: bash
+        run: |
+          APP_DIR="./release/biliTickerBuy"
+
+          echo "Disk usage before macOS DMG cleanup:"
+          df -h .
+          df -h /tmp || true
+          du -sh ./build ./dist ./release 2>/dev/null || true
+
+          # The CLI asset is already archived, so dist/build can be removed
+          # before DMG creation to lower peak disk usage on GitHub runners.
+          rm -rf ./dist ./build
+
+          echo "Disk usage after macOS DMG cleanup:"
+          df -h .
+          df -h /tmp || true
+          du -sh ./release 2>/dev/null || true
+
+          SOURCE_KB="$(du -sk "$APP_DIR" | awk '{print $1}')"
+          DMG_SIZE_MB="$(( (SOURCE_KB * 2 + 1024 * 200 + 1023) / 1024 ))"
+
+          echo "Source size: ${SOURCE_KB} KiB"
+          echo "Allocated DMG size: ${DMG_SIZE_MB} MiB"
+
+          # Build a writable image with explicit headroom first, then convert it
+          # to a compressed read-only DMG. This avoids hdiutil auto-sizing issues.
+          hdiutil create \
+            -volname "biliTickerBuy" \
+            -srcfolder "$APP_DIR" \
+            -ov \
+            -fs HFS+ \
+            -format UDRW \
+            -size "${DMG_SIZE_MB}m" \
+            "./tmp-rw.dmg"
+
+          hdiutil convert "./tmp-rw.dmg" \
+            -ov \
+            -format UDZO \
+            -o "./tmp.dmg"
+
+          rm -f ./tmp-rw.dmg
+
+      - name: Prepare release bundle metadata
+        shell: bash
+        env:
+          DRAFT_TAG: ${{ needs.update_release_draft.outputs.tag_name }}
+          RELEASE_ZIP_NAME: ${{ secrets.ReleaseZipName }}
+          PLATFORM_KEY: ${{ matrix.config.os.filename }}
+        run: |
+          if [[ "${PLATFORM_KEY}" == macos_* ]]; then
+            ASSET_EXT="dmg"
+            SRC_ASSET="tmp.dmg"
+          else
+            ASSET_EXT="zip"
+            SRC_ASSET="tmp.zip"
+          fi
+
+          TMP_ASSET="tmp.${ASSET_EXT}"
+          if [[ "${SRC_ASSET}" != "${TMP_ASSET}" ]]; then
+            mv "${SRC_ASSET}" "${TMP_ASSET}"
+          fi
+
+          ASSET_NAME="${RELEASE_ZIP_NAME}_${PLATFORM_KEY}_${DRAFT_TAG}.${ASSET_EXT}"
+
+          echo "Draft tag: ${DRAFT_TAG}"
+          echo "Asset name: ${ASSET_NAME}"
+
+          mv "tmp.${ASSET_EXT}" "$ASSET_NAME"
+
+          export ASSET_NAME
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          asset_path = Path(os.environ["ASSET_NAME"])
+          digest = hashlib.sha256()
+          with asset_path.open("rb") as fh:
+              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                  if chunk:
+                      digest.update(chunk)
+
+          payload = {
+              os.environ["PLATFORM_KEY"]: {
+                  "name": asset_path.name,
+                  "sha256": digest.hexdigest(),
+                  "size": asset_path.stat().st_size,
+              }
+          }
+          Path("release-manifest-entry.json").write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Prepare extra macOS CLI asset
+        if: startsWith(matrix.config.os.filename, 'macos_')
+        shell: bash
+        env:
+          DRAFT_TAG: ${{ needs.update_release_draft.outputs.tag_name }}
+          RELEASE_ZIP_NAME: ${{ secrets.ReleaseZipName }}
+          PLATFORM_KEY: ${{ matrix.config.os.filename }}
+        run: |
+          EXTRA_ASSET_NAME="${RELEASE_ZIP_NAME}_${PLATFORM_KEY}_${DRAFT_TAG}_cli.zip"
+          mv tmp-macos-cli.zip "$EXTRA_ASSET_NAME"
+          echo "$EXTRA_ASSET_NAME" > extra-macos-asset-name.txt
+          export EXTRA_ASSET_NAME
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          metadata_path = Path("release-manifest-entry.json")
+          payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+          platform_key = os.environ["PLATFORM_KEY"]
+          platform_entry = payload[platform_key]
+
+          primary_asset = {
+              "name": platform_entry["name"],
+              "sha256": platform_entry["sha256"],
+              "size": platform_entry["size"],
+              "kind": "primary",
+          }
+
+          extra_asset_path = Path(os.environ["EXTRA_ASSET_NAME"])
+          digest = hashlib.sha256()
+          with extra_asset_path.open("rb") as fh:
+              for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                  if chunk:
+                      digest.update(chunk)
+
+          extra_asset = {
+              "name": extra_asset_path.name,
+              "sha256": digest.hexdigest(),
+              "size": extra_asset_path.stat().st_size,
+              "kind": "cli",
+          }
+
+          platform_entry["assets"] = [primary_asset, extra_asset]
+          metadata_path.write_text(
+              json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload binaries to draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRAFT_TAG: ${{ needs.update_release_draft.outputs.tag_name }}
+        run: |
+          ASSET_NAME="$(python -c "import json; print(json.load(open('release-manifest-entry.json', encoding='utf-8')).popitem()[1]['name'])")"
+          gh release upload "$DRAFT_TAG" "$ASSET_NAME" --clobber
+          if [ -f extra-macos-asset-name.txt ]; then
+            EXTRA_ASSET_NAME="$(cat extra-macos-asset-name.txt)"
+            gh release upload "$DRAFT_TAG" "$EXTRA_ASSET_NAME" --clobber
+          fi
+
+      - name: Upload manifest inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest-${{ matrix.config.os.filename }}
+          path: |
+            *.zip
+            *.dmg
+            release-manifest-entry.json
+          if-no-files-found: error
+
+  upload_release_manifest:
+    name: Upload Release Manifest
+    needs:
+      - update_release_draft
+      - build_and_upload_draft_assets
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.update_release_draft.outputs.tag_name != ''
+    permissions:
+      contents: write
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Download manifest inputs
+        uses: actions/download-artifact@v4
+        with:
+          path: release-manifest
+          pattern: release-manifest-*
+
+      - name: Build version-info.json
+        shell: bash
+        env:
+          DRAFT_TAG: ${{ needs.update_release_draft.outputs.tag_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("release-manifest")
+          files = {}
+          for metadata_path in sorted(root.rglob("release-manifest-entry.json")):
+              payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+              if not isinstance(payload, dict):
+                  raise SystemExit(f"Invalid metadata file: {metadata_path}")
+              files.update(payload)
+
+          if not files:
+              raise SystemExit("No release metadata found.")
+
+          manifest = {
+              "version": os.environ["DRAFT_TAG"],
+              "files": files,
+          }
+          Path("version-info.json").write_text(
+              json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Upload version manifest to draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRAFT_TAG: ${{ needs.update_release_draft.outputs.tag_name }}
+        run: |
+          gh release upload "$DRAFT_TAG" version-info.json --clobber
