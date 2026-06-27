@@ -143,7 +143,7 @@ def _build_session_ticket_preview() -> str:
 def go_start_tab():
     with gr.Column(elem_classes="btb-page-section"):
         with gr.Column(elem_classes="btb-card btb-card-sky btb-layout-card"):
-            with gr.Row(elem_classes="!items-stretch !gap-3"):
+            with gr.Row():
                 upload_ui = gr.Files(
                     label="每一个上传的文件都会启动一个抢票程序",
                     file_count="multiple",
@@ -185,7 +185,7 @@ def go_start_tab():
                     </div>
                     """
                 )
-            with gr.Row(elem_classes="!justify-end"):
+            with gr.Row():
                 auto_fill_time_btn = gr.Button(
                     "自动填写抢票时间",
                     elem_classes="btb-soft-button",
@@ -193,7 +193,7 @@ def go_start_tab():
                     min_width=220,
                 )
 
-        with gr.Row(elem_classes="btb-inline-actions !justify-end"):
+        with gr.Row(elem_classes="btb-inline-actions"):
             interval_ui = gr.Number(
                 label="抢票间隔",
                 value=None,

@@ -391,7 +391,7 @@ def go_settings_tab(header_ui):
                         placeholder="每行填写一个代理地址，留空表示只使用直连\n例如：\nhttp://127.0.0.1:8080\nsocks5://127.0.0.1:1080\nhttp://proxyuser:proxypass@xx.xx.xx.xx:8080",
                         value=get_latest_proxy(),
                     )
-                    with gr.Row(elem_classes="btb-inline-actions !justify-end"):
+                    with gr.Row(elem_classes="btb-inline-actions"):
                         save_proxy_btn = gr.Button(
                             "保存代理配置",
                             elem_classes="btb-soft-button",
@@ -451,7 +451,7 @@ def go_settings_tab(header_ui):
                                 type="password",
                                 value=get_proxy_api_password(),
                             )
-                    with gr.Row(elem_classes="btb-inline-actions !justify-end"):
+                    with gr.Row(elem_classes="btb-inline-actions"):
                         save_proxy_api_btn = gr.Button(
                             "保存 API 配置",
                             elem_classes="btb-soft-button",
@@ -601,7 +601,7 @@ def go_settings_tab(header_ui):
                         interactive=True,
                         info="例如: https://ntfy.sh/your-topic",
                     )
-                    with gr.Row(elem_classes="btb-inline-actions !justify-end"):
+                    with gr.Row(elem_classes="btb-inline-actions"):
                         ntfy_username_ui = gr.Textbox(
                             value=ConfigDB.get("ntfyUsername") or "",
                             label="Ntfy用户名",
@@ -625,7 +625,7 @@ def go_settings_tab(header_ui):
                     gr.Markdown("#### 测试")
                     test_all_push_button = gr.Button(
                         "🧪 测试所有推送",
-                        elem_classes="!rounded-xl !border !border-slate-300 !bg-white !text-slate-900 !shadow-sm hover:!bg-slate-100 !transition",
+                        elem_classes="btb-soft-button",
                     )
                     test_push_result = gr.Textbox(
                         label="推送测试结果",

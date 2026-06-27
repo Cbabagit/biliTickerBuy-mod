@@ -555,7 +555,7 @@ def login_tab():
         with gr.Accordion(
             label="填写当前账号绑定的手机号（可选）",
             open=False,
-            elem_classes="btb-card btb-soft-accordion",
+            elem_classes="btb-card",
         ):
             phone_gate_ui = gr.Textbox(
                 label="手机号",
@@ -664,12 +664,11 @@ def login_tab():
                     duration=5,
                 )
 
-        with gr.Row(elem_classes="btb-split-grid !items-stretch"):
+        with gr.Row(elem_classes="btb-split-grid"):
             with gr.Column(elem_classes="btb-subcard", scale=4):
                 qr_img = gr.Image(
                     label="扫我",
                     visible=False,
-                    elem_classes="btb-qr-preview",
                 )
                 login_btn = gr.Button(
                     "点击生成登录二维码",
@@ -698,7 +697,7 @@ def login_tab():
                     allow_custom_value=False,
                     filterable=False,
                 )
-                with gr.Row(elem_classes="!gap-2"):
+                with gr.Row():
                     delete_btn = gr.Button(
                         "删除当前账号",
                         elem_classes="btb-soft-button",
@@ -874,7 +873,7 @@ def setting_tab():
                 </div>
                 """
             )
-            with gr.Row(elem_classes="btb-action-band !items-end"):
+            with gr.Row(elem_classes="btb-action-band"):
                 ticket_id_ui = gr.Textbox(
                     label="想抢票的活动链接",
                     interactive=True,
@@ -908,7 +907,7 @@ def setting_tab():
                         filterable=False,
                     )
 
-                with gr.Row(elem_classes="btb-split-grid !items-end"):
+                with gr.Row(elem_classes="btb-split-grid"):
                     people_buyer_name = gr.Textbox(
                         value=lambda: ConfigDB.get("people_buyer_name") or "",
                         label="联系人姓名",
@@ -938,7 +937,7 @@ def setting_tab():
                     elem_classes="btb-people-grid",
                 )
 
-                with gr.Row(elem_classes="btb-output-band !items-start"):
+                with gr.Row(elem_classes="btb-output-band"):
                     config_btn = gr.Button(
                         "生成配置",
                         elem_classes="btb-strong-button",
