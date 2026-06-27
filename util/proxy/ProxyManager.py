@@ -1,6 +1,18 @@
+"""代理管理器"""
+
+from __future__ import annotations
+
+import json
+import re
+import socket
+import urllib.request
+
 import requests
 
 from util.proxy.ProxyState import ProxyStateRegistry
+
+# Clash fake-IP CIDR 198.18.0.0/15
+_FAKE_IP_RE = re.compile(r"^198\.18\.")
 
 
 class ProxyManager:
@@ -121,14 +133,90 @@ class ProxyManager:
     def restore(self, index: int) -> None:
         self.now_proxy_idx = index
 
+    @staticmethod
+    def _resolve_via_doh(host: str) -> str | None:
+        """通过 DNS-over-HTTPS 解析域名，绕过 Clash fake-IP。"""
+        doh_urls = [
+            f"https://dns.google/resolve?name={host}&type=A",
+            f"https://cloudflare-dns.com/dns-query?name={host}&type=A",
+        ]
+        for url in doh_urls:
+            try:
+                req = urllib.request.Request(url)
+                if "cloudflare" in url:
+                    req.add_header("Accept", "application/dns-json")
+                resp = urllib.request.urlopen(req, timeout=3)
+                data = json.loads(resp.read().decode())
+                for answer in data.get("Answer", []):
+                    if answer.get("type") != 1:
+                        continue  # 只取 A 记录，跳过 CNAME
+                    ip = answer.get("data", "")
+                    if ip and not _FAKE_IP_RE.match(ip):
+                        return ip
+            except Exception:
+                continue
+        return None
+
+    @staticmethod
+    def _resolve_proxy_host(proxy: str) -> str:
+        """解析代理 URL 中的主机名：Clash fake-IP 污染时替换为真实 IP。"""
+        if not proxy or proxy == "none" or "://" not in proxy:
+            return proxy
+
+        scheme, remainder = proxy.split("://", 1)
+        userinfo_host, _, _ = remainder.partition("/")
+        if "@" in userinfo_host:
+            _, real_host_port = userinfo_host.rsplit("@", 1)
+            userinfo = remainder.rsplit("@", 1)[0]
+            prefix = f"{userinfo}@"
+        else:
+            real_host_port = userinfo_host
+            prefix = ""
+
+        if ":" in real_host_port:
+            host, port = real_host_port.rsplit(":", 1)
+        else:
+            host = real_host_port
+            port = None
+
+        # 已经是 IP 地址
+        if host and (host[0].isdigit() or host[0] == "["):
+            return proxy
+
+        # 检查系统 DNS 是否返回 fake-IP
+        fake = False
+        try:
+            for addr in socket.getaddrinfo(host, None):
+                ip = addr[4][0]
+                if _FAKE_IP_RE.match(ip):
+                    fake = True
+                else:
+                    fake = False
+                    break
+        except OSError:
+            fake = True
+
+        if not fake:
+            return proxy
+
+        # 通过 DoH 拿到真实 IP
+        real_ip = ProxyManager._resolve_via_doh(host)
+        if real_ip:
+            resolved_port = port or "443"
+            return f"{scheme}://{prefix}{real_ip}:{resolved_port}"
+
+        # DoH 也失败，只能返回原 URL（会报错但至少不会静默失败）
+        return proxy
+
     def apply_to_session(self, session: requests.Session) -> None:
         session.trust_env = False
         if self.current_proxy == "none":
             session.proxies = {}
             return
+        resolved = self._resolve_proxy_host(self.current_proxy)
         session.proxies = {
-            "http": self.current_proxy,
-            "https": self.current_proxy,
+            "http": resolved,
+            "https": resolved,
         }
 
     def rotate(self) -> bool:

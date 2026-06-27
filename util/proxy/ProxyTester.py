@@ -51,6 +51,10 @@ class ProxyTester:
         """测试单个代理：并行跑 B站延迟 + 出口 IP 获取"""
         display = ProxyManager.mask_proxy_value(proxy) or proxy
         normalized = ProxyManager.normalize_proxy_value(proxy)
+        # 解析代理主机名，绕过 Clash fake-IP
+        proxy_for_conn = ProxyManager._resolve_proxy_host(normalized)
+        if proxy_for_conn != normalized:
+            display = ProxyManager.mask_proxy_value(proxy_for_conn) or proxy
 
         # 预创建结果容器
         result: dict[str, Any] = {
@@ -65,7 +69,7 @@ class ProxyTester:
             result["error"] = "代理格式无效"
             return result
 
-        proxies: dict[str, str] = {} if normalized == "none" else {"http": normalized, "https": normalized}
+        proxies: dict[str, str] = {} if proxy_for_conn == "none" else {"http": proxy_for_conn, "https": proxy_for_conn}
 
         # ---- 内部任务：B站延迟 ----
         def task_bili():
@@ -87,7 +91,7 @@ class ProxyTester:
                 result["response_time"] = elapsed
             except requests.Timeout:
                 result["error"] = f"连接超时 (>{self.timeout}s)"
-            except requests.ProxyError:
+            except requests.exceptions.ProxyError:
                 result["error"] = "代理服务器错误或无法连接"
             except requests.ConnectionError as e:
                 result["error"] = "代理连接失败" if "proxy" in str(e).lower() else "网络连接失败"

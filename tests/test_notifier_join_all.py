@@ -82,7 +82,7 @@ def test_join_all_timeout_does_not_block_forever():
     manager.join_all(timeout=0.3)
     elapsed = time.monotonic() - started_at
 
-    # 超时返回，且大致在��时阈值附近（不会��满 10s）
+    # 超时返回，且大致在超时阈值附近（不会跑满 10s）
     assert notifier.sent.is_set() is False
     assert elapsed < 2.0
 
