@@ -46,12 +46,30 @@ def go_settings_tab(header_ui):
     def get_latest_proxy():
         return _format_proxy_text(ConfigDB.get("https_proxy") or "")
 
+    def _normalize_api_protocol(protocol: str) -> str:
+        p = protocol.lower()
+        if p in {"socks", "socks5"}:
+            return "socks5"
+        if p == "https":
+            return "https"
+        return "http"
+
     def get_proxy_api_url():
         return ConfigDB.get("proxyApiUrl") or ""
 
     def get_proxy_api_protocol():
         protocol = str(ConfigDB.get("proxyApiProtocol") or "http").lower()
-        return "socks5" if protocol in {"socks", "socks5"} else "http"
+        if protocol in {"socks", "socks5"}:
+            return "socks5"
+        if protocol in {"https"}:
+            return "https"
+        return "http"
+
+    def get_proxy_api_username():
+        return ConfigDB.get("proxyApiUsername") or ""
+
+    def get_proxy_api_password():
+        return ConfigDB.get("proxyApiPassword") or ""
 
     def input_https_proxy(_https_proxy):
         normalized_proxy = _serialize_proxy_text(_https_proxy)
@@ -79,21 +97,26 @@ def go_settings_tab(header_ui):
     def show_proxy_test_loading():
         return gr.update(value="正在测试代理连通性，请稍候...", visible=True)
 
-    def fetch_proxy_from_api(api_url, protocol):
+    def fetch_proxy_from_api(api_url, protocol, username, password):
         try:
             from util.proxy.ProxyApiProvider import fetch_proxy_api
 
-            protocol = (
-                "socks5" if str(protocol).lower() in {"socks", "socks5"} else "http"
-            )
+            protocol = _normalize_api_protocol(str(protocol or "http"))
+            username = str(username or "").strip()
+            password = str(password or "").strip()
             ConfigDB.insert("proxyApiUrl", str(api_url or "").strip())
             ConfigDB.insert("proxyApiProtocol", protocol)
+            ConfigDB.insert("proxyApiUsername", username)
+            ConfigDB.insert("proxyApiPassword", password)
             count = ConfigDB.get_as_int("queueConcurrencyLimit", 0)
             if count <= 0:
                 count = max(
                     1, len(_split_proxy_lines(ConfigDB.get("https_proxy") or ""))
                 )
-            result = fetch_proxy_api(api_url, count=count, protocol=protocol)
+            result = fetch_proxy_api(
+                api_url, count=count, protocol=protocol,
+                username=username, password=password,
+            )
             ConfigDB.insert("https_proxy", ",".join(result.proxies))
             gr.Info(f"已从代理 API 获取 {len(result.proxies)} 个代理。")
             return gr.update(value="\n".join(result.proxies)), gr.update(
@@ -105,13 +128,20 @@ def go_settings_tab(header_ui):
                 value=f"❌ 获取代理失败: {str(e)}", visible=True
             )
 
-    def save_proxy_api_config(api_url, protocol):
-        protocol = "socks5" if str(protocol).lower() in {"socks", "socks5"} else "http"
+    def save_proxy_api_config(api_url, protocol, username, password):
+        protocol = _normalize_api_protocol(str(protocol or "http"))
+        username = str(username or "").strip()
+        password = str(password or "").strip()
         ConfigDB.insert("proxyApiUrl", str(api_url or "").strip())
         ConfigDB.insert("proxyApiProtocol", protocol)
+        ConfigDB.insert("proxyApiUsername", username)
+        ConfigDB.insert("proxyApiPassword", password)
         gr.Info("代理 API 配置已保存。")
-        return gr.update(value=ConfigDB.get("proxyApiUrl") or ""), gr.update(
-            value=protocol
+        return (
+            gr.update(value=ConfigDB.get("proxyApiUrl") or ""),
+            gr.update(value=protocol),
+            gr.update(value=username),
+            gr.update(value=password),
         )
 
     def inner_input_serverchan(x):
@@ -398,7 +428,8 @@ def go_settings_tab(header_ui):
                     proxy_api_protocol_ui = gr.Dropdown(
                         label="代理地址类型",
                         choices=[
-                            ("HTTP / HTTPS", "http"),
+                            ("HTTP", "http"),
+                            ("HTTPS", "https"),
                             ("SOCKS5", "socks5"),
                         ],
                         value=get_proxy_api_protocol(),
@@ -406,6 +437,20 @@ def go_settings_tab(header_ui):
                         allow_custom_value=False,
                         filterable=False,
                     )
+                    with gr.Row():
+                        with gr.Column(scale=1):
+                            proxy_api_username_ui = gr.Textbox(
+                                label="代理用户名（可选）",
+                                placeholder="留空则不使用账号密码",
+                                value=get_proxy_api_username(),
+                            )
+                        with gr.Column(scale=1):
+                            proxy_api_password_ui = gr.Textbox(
+                                label="代理密码（可选）",
+                                placeholder="留空则不使用账号密码",
+                                type="password",
+                                value=get_proxy_api_password(),
+                            )
                     with gr.Row(elem_classes="btb-inline-actions !justify-end"):
                         save_proxy_api_btn = gr.Button(
                             "保存 API 配置",
@@ -413,19 +458,20 @@ def go_settings_tab(header_ui):
                         )
                         fetch_proxy_api_btn = gr.Button(
                             "获取并填入代理",
-                            elem_classes="btb-soft-button",
+                            variant="primary",
                         )
                     proxy_api_result_ui = gr.Textbox(
                         label="代理 API 结果",
                         interactive=False,
                         visible=False,
+                        lines=3,
                     )
                     gr.Markdown(
                         """
                         <div class="mt-3 text-sm leading-7 text-slate-700">
                           <p><strong>怎么填写：</strong>推荐每行填写一个代理地址，也支持逗号分隔。留空表示只使用直连。</p>
                           <p><strong>支持格式：</strong><code>http://IP:端口</code>、<code>https://IP:端口</code>、<code>socks5://IP:端口</code>。</p>
-                          <p><strong>带账号密码的 HTTP 代理示例：</strong><code>http://proxyuser:proxypass@xx.xx.xx.xx:8080</code></p>
+                          <p><strong>带账号密码示例：</strong><code>http://proxyuser:proxypass@xx.xx.xx.xx:8080</code>、<code>socks5://proxyuser:proxypass@xx.xx.xx.xx:1080</code></p>
                           <p><strong>程序什么时候会用代理：</strong>当抢票流程检测到风控时，会按你填写的顺序切换到下一个代理；当前请求不会在请求层立刻自动重试，下一次抢票重试才会使用新代理。</p>
                           <p><strong>代理失效怎么处理：</strong>同一代理在短时间内连续失败会被暂时冷却；如果所有代理都不可用，程序会按递增时间休息后再试。</p>
                           <p><strong>代理 API：</strong>保存 API 地址后，程序会在代理全部不可用时自动按并发数请求新代理；请求会自动带上 <code>format=json</code>、<code>count</code> 和所选 <code>protocol</code>。</p>
@@ -719,12 +765,12 @@ def go_settings_tab(header_ui):
     )
     save_proxy_api_btn.click(
         fn=save_proxy_api_config,
-        inputs=[proxy_api_url_ui, proxy_api_protocol_ui],
-        outputs=[proxy_api_url_ui, proxy_api_protocol_ui],
+        inputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui],
+        outputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui],
     )
     fetch_proxy_api_btn.click(
         fn=fetch_proxy_from_api,
-        inputs=[proxy_api_url_ui, proxy_api_protocol_ui],
+        inputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui],
         outputs=[https_proxy_ui, proxy_api_result_ui],
     )
 
@@ -872,6 +918,8 @@ def go_settings_tab(header_ui):
             gr.update(value=get_latest_proxy()),
             gr.update(value=get_proxy_api_url()),
             gr.update(value=get_proxy_api_protocol()),
+            gr.update(value=get_proxy_api_username()),
+            gr.update(value=get_proxy_api_password()),
             gr.update(value=ConfigDB.get("audioPath") or None),
             gr.update(value=ConfigDB.get("serverchanKey") or ""),
             gr.update(value=ConfigDB.get("serverchan3ApiUrl") or ""),
@@ -915,6 +963,8 @@ def go_settings_tab(header_ui):
         https_proxy_ui,
         proxy_api_url_ui,
         proxy_api_protocol_ui,
+        proxy_api_username_ui,
+        proxy_api_password_ui,
         audio_path_ui,
         serverchan_ui,
         serverchan3_ui,

@@ -88,6 +88,24 @@ class BuyConfig(BasicConfig):
     )
     """Number of proxies requested from the API; 0 follows the current pool size."""
 
+    proxy_api_username: str = config_field(
+        "",
+        env="BTB_PROXY_API_USERNAME",
+        runtime="proxy_api_username",
+        db="proxyApiUsername",
+        cli="--proxy-api-username",
+    )
+    """Username for proxy API credentials (applied to each returned proxy)."""
+
+    proxy_api_password: str = config_field(
+        "",
+        env="BTB_PROXY_API_PASSWORD",
+        runtime="proxy_api_password",
+        db="proxyApiPassword",
+        cli="--proxy-api-password",
+    )
+    """Password for proxy API credentials (applied to each returned proxy)."""
+
     prepare_max_retries: int = config_field(
         100,
         env="BTB_PREPARE_MAX_RETRIES",
@@ -99,7 +117,7 @@ class BuyConfig(BasicConfig):
     """Maximum prepare retry limit before giving up."""
 
     prepare_backoff_base_ms: int = config_field(
-        3000,
+        1000,
         env="BTB_PREPARE_BACKOFF_BASE_MS",
         runtime="prepare_backoff_base_ms",
         db="prepareBackoffBaseMs",
@@ -221,7 +239,7 @@ class BuyConfig(BasicConfig):
     """Cooldown duration for a failed proxy, in seconds."""
 
     proxy_backoff_max_seconds: int = config_field(
-        240,
+        60,
         env="BTB_PROXY_BACKOFF_MAX_SECONDS",
         runtime="proxy_backoff_max_seconds",
         db="proxyBackoffMaxSeconds",

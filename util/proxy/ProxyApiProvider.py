@@ -22,6 +22,8 @@ def normalize_proxy_api_protocol(protocol: str | None) -> str:
     text = str(protocol or "http").strip().lower()
     if text in {"socks", "socks5"}:
         return "socks5"
+    if text in {"https"}:
+        return "https"
     return "http"
 
 
@@ -92,14 +94,27 @@ def _extract_host_port(item: Any) -> tuple[str, str] | None:
     return host.strip(), port.strip()
 
 
-def parse_proxy_api_response(payload: dict[str, Any], *, protocol: str) -> list[str]:
+def parse_proxy_api_response(
+    payload: dict[str, Any],
+    *,
+    protocol: str,
+    username: str = "",
+    password: str = "",
+) -> list[str]:
     code = payload.get("code", payload.get("errno", 0))
     success = payload.get("success")
     if success is False or str(code) not in {"0", "200", "None"}:
         message = payload.get("msg") or payload.get("message") or payload
         raise ProxyApiError(f"代理 API 返回失败: {message}")
 
-    scheme = "socks" if normalize_proxy_api_protocol(protocol) == "socks5" else "http"
+    norm = normalize_proxy_api_protocol(protocol)
+    if norm == "socks5":
+        scheme = "socks5"
+    elif norm == "https":
+        scheme = "https"
+    else:
+        scheme = "http"
+
     proxies: list[str] = []
     seen: set[str] = set()
     for item in _iter_proxy_items(payload):
@@ -109,7 +124,8 @@ def parse_proxy_api_response(payload: dict[str, Any], *, protocol: str) -> list[
         host, port = host_port
         if not host or not port.isdigit():
             continue
-        proxy = f"{scheme}://{host}:{port}"
+        auth = f"{username}:{password}@" if username and password else ""
+        proxy = f"{scheme}://{auth}{host}:{port}"
         key = proxy.lower()
         if key in seen:
             continue
@@ -126,6 +142,8 @@ def fetch_proxy_api(
     *,
     count: int,
     protocol: str,
+    username: str = "",
+    password: str = "",
     timeout: int = 15,
 ) -> ProxyApiResult:
     request_url = build_proxy_api_url(api_url, count=count, protocol=protocol)
@@ -137,6 +155,8 @@ def fetch_proxy_api(
     if not isinstance(payload, dict):
         raise ProxyApiError("代理 API 未返回 JSON 对象")
     return ProxyApiResult(
-        proxies=parse_proxy_api_response(payload, protocol=protocol),
+        proxies=parse_proxy_api_response(
+            payload, protocol=protocol, username=username, password=password
+        ),
         response=payload,
     )

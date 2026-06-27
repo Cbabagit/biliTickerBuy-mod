@@ -250,6 +250,8 @@ def buy_stream(config: BuyConfig):
                     config.proxy_api_url,
                     count=request_count,
                     protocol=config.proxy_api_protocol,
+                    username=config.proxy_api_username,
+                    password=config.proxy_api_password,
                 )
                 _request.replace_proxy_pool(",".join(result.proxies))
                 return (
@@ -286,20 +288,23 @@ def buy_stream(config: BuyConfig):
                 )
         if delay_seconds is None:
             return
-        for remaining in range(delay_seconds, 0, -1):
-            yield emit(
-                "state",
-                None,
-                BuyStreamUpdate(
-                    current_proxy=_request.current_proxy_status(),
-                    proxy_pool=_request.proxy_pool_status(),
-                    cooldown_remaining=remaining,
-                    status="cooldown",
-                    attempt_current=attempt,
-                    attempt_total=attempt_total,
-                ),
-            )
-            time.sleep(1)
+        if delay_seconds < 1:
+            time.sleep(delay_seconds)
+        else:
+            for remaining in range(int(delay_seconds), 0, -1):
+                yield emit(
+                    "state",
+                    None,
+                    BuyStreamUpdate(
+                        current_proxy=_request.current_proxy_status(),
+                        proxy_pool=_request.proxy_pool_status(),
+                        cooldown_remaining=remaining,
+                        status="cooldown",
+                        attempt_current=attempt,
+                        attempt_total=attempt_total,
+                    ),
+                )
+                time.sleep(1)
         if _request.ensure_active_proxy():
             proxy_backoff.reset()
             yield emit(
@@ -373,7 +378,7 @@ def buy_stream(config: BuyConfig):
         proxy_failure_threshold=config.proxy_max_consecutive_failures,
         proxy_cooldown_seconds=config.proxy_cooldown_seconds,
     )
-    proxy_backoff = ProxyBackoff(max_seconds=config.proxy_backoff_max_seconds)
+    proxy_backoff = ProxyBackoff()
     is_hot_project = bool(tickets_info.get("is_hot_project", False))
     # use_local_token = bool(config.use_local_token)
     browser_window_state = generate_browser_window_state()
@@ -618,7 +623,13 @@ def buy_stream(config: BuyConfig):
                                 ),
                             )
                             tickets_info["pay_money"] = ret["data"]["pay_money"]
-                        should_sleep_before_next_attempt = True
+                        if err in (900001, 900002):
+                            yield emit(
+                                "attempt",
+                                f"[900001] 中间层限流，继续冲" if err == 900001 else f"[900002] 请求较多，继续冲",
+                            )
+                        else:
+                            should_sleep_before_next_attempt = True
                     except JSONDecodeError as exc:
                         handled_412 = yield from handle_non_json_response(
                             "创建订单接口",

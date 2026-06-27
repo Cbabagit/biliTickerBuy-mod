@@ -1,211 +1,223 @@
+"""代理连通性测试工具 — 优化版
+
+优化点:
+- B站延迟 + 出口 IP 并行获取，消除串行等待
+- 缩短超时：B站 5s / IP 2s
+- 无 Session 开销，直接 requests.get
+- 高并发：默认 max_workers=10
+- 排序 O(n)：哈希表映射，避免 index() 遍历
+"""
+
+from __future__ import annotations
+
 import time
-import requests
-import loguru
-from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any
+
+import requests
+
 from util.proxy.ProxyManager import ProxyManager
 
 
-# 代理连通性测试工具
 class ProxyTester:
-    def __init__(self, timeout: int = 10):
-        self.timeout = timeout
+    """代理连通性测试工具"""
 
-    # 测试单个代理连通性
-    def test_single_proxy(self, proxy: str) -> Dict[str, Any]:
-        result = {
-            "proxy": ProxyManager.mask_proxy_value(proxy) or proxy,
+    VALID_PROTOCOLS = ("http://", "https://", "socks5://", "socks4://")
+    BILI_URL = "https://api.bilibili.com/x/web-interface/nav"
+    BILI_HEADERS = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"
+        ),
+        "Accept": "application/json",
+    }
+
+    def __init__(self, timeout: int = 5, ip_timeout: int = 2):
+        self.timeout = timeout
+        self.ip_timeout = ip_timeout
+
+    @staticmethod
+    def _validate_proxy_format(proxy: str) -> bool:
+        proxy = proxy.strip()
+        if not proxy:
+            return False
+        if not any(proxy.startswith(p) for p in ProxyTester.VALID_PROTOCOLS):
+            return False
+        remainder = proxy.split("://", 1)[1]
+        return ":" in remainder
+
+    def test_single_proxy(self, proxy: str) -> dict[str, Any]:
+        """测试单个代理：并行跑 B站延迟 + 出口 IP 获取"""
+        display = ProxyManager.mask_proxy_value(proxy) or proxy
+        normalized = ProxyManager.normalize_proxy_value(proxy)
+
+        # 预创建结果容器
+        result: dict[str, Any] = {
+            "proxy": display,
             "status": "failed",
             "response_time": None,
             "error": None,
             "ip_info": None,
         }
 
-        try:
-            session = requests.Session()
-            proxy = ProxyManager.normalize_proxy_value(proxy)
-            if proxy != "none" and not self._validate_proxy_format(proxy):
-                result["error"] = "代理格式无效"
-                return result
-            ProxyManager(proxy).apply_to_session(session)
+        if normalized != "none" and not self._validate_proxy_format(normalized):
+            result["error"] = "代理格式无效"
+            return result
 
-            # 测试连通性和响应时间
-            start_time = time.time()
-            response = session.get(
-                "https://api.bilibili.com/x/web-interface/nav",
-                timeout=self.timeout,
-                headers={
-                    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0",
-                },
-            )
-            end_time = time.time()
-            response_time = round((end_time - start_time) * 1000, 2)  # 毫秒
+        proxies: dict[str, str] = {} if normalized == "none" else {"http": normalized, "https": normalized}
 
-            if response.status_code == 200:
-                result["status"] = "success"
-                result["response_time"] = response_time
-                # 获取出口IP信息
-                result["ip_info"] = self._get_ip_info(session)
-            else:
-                result["error"] = f"B站连接失败: HTTP {response.status_code}"
-                result["status"] = "partial"
-                result["response_time"] = response_time
-                # 部分成功时也尝试获取IP
-                result["ip_info"] = self._get_ip_info(session)
-        except requests.exceptions.Timeout:
-            result["error"] = f"连接超时 (>{self.timeout}s)"
-        except requests.exceptions.ProxyError:
-            result["error"] = "代理服务器错误或无法连接"
-        except requests.exceptions.ConnectionError as e:
-            if "proxy" in str(e).lower():
-                result["error"] = "代理连接失败"
-            else:
-                result["error"] = "网络连接失败"
-        except Exception as e:
-            result["error"] = f"未知错误: {str(e)}"
+        # ---- 内部任务：B站延迟 ----
+        def task_bili():
+            nonlocal result
+            try:
+                start = time.monotonic()
+                resp = requests.get(
+                    self.BILI_URL,
+                    proxies=proxies,
+                    timeout=self.timeout,
+                    headers=self.BILI_HEADERS,
+                )
+                elapsed = round((time.monotonic() - start) * 1000, 2)
+                if resp.status_code == 200:
+                    result["status"] = "success"
+                else:
+                    result["status"] = "partial"
+                    result["error"] = f"B站连接失败 HTTP {resp.status_code}"
+                result["response_time"] = elapsed
+            except requests.Timeout:
+                result["error"] = f"连接超时 (>{self.timeout}s)"
+            except requests.ProxyError:
+                result["error"] = "代理服务器错误或无法连接"
+            except requests.ConnectionError as e:
+                result["error"] = "代理连接失败" if "proxy" in str(e).lower() else "网络连接失败"
+            except Exception as e:
+                result["error"] = f"未知错误: {e}"
+
+        # ---- 内部任务：出口 IP ----
+        def task_ip():
+            nonlocal result
+            # httpbin.org 最轻量，优先用
+            try:
+                resp = requests.get(
+                    "https://httpbin.org/ip",
+                    proxies=proxies,
+                    timeout=self.ip_timeout,
+                    headers={"User-Agent": "curl/8.0"},
+                )
+                if resp.status_code == 200:
+                    ip_raw = resp.json().get("origin", "")
+                    result["ip_info"] = ip_raw
+                    return
+            except Exception:
+                pass
+
+            # fallback: ip-api.com（带位置/ISP 信息）
+            try:
+                resp = requests.get(
+                    "http://ip-api.com/json/",
+                    proxies=proxies,
+                    timeout=self.ip_timeout,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    ip = data.get("query", "未知")
+                    parts = [ip]
+                    if data.get("city"):
+                        parts.append(data["city"])
+                    if data.get("isp") and data["isp"] not in ("", ip):
+                        parts.append(data["isp"])
+                    result["ip_info"] = " ({})".format(", ".join(parts[1:])) if len(parts) > 1 else ip
+                    return
+            except Exception:
+                pass
+
+            if result.get("ip_info") is None:
+                result["ip_info"] = "IP获取失败"
+
+        # 并行执行
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_bili = pool.submit(task_bili)
+            f_ip = pool.submit(task_ip)
+            f_bili.result()
+            f_ip.result()
 
         return result
 
-    def _get_ip_info(self, session) -> str:
-        """获取出口IP信息"""
-        # 服务列表：优先详细信息，然后降级到基础服务
-        ip_services = [
-            {
-                "name": "ip-api.com",
-                "url": "http://ip-api.com/json/",
-                "parser": lambda data: (
-                    f"{data.get('query', '未知')} ({data.get('city', '未知')}, {data.get('isp', '未知')})"
-                ),
-            },
-            {
-                "name": "httpbin.org",
-                "url": "http://httpbin.org/ip",
-                "parser": lambda data: data.get("origin", "未知"),
-            },
-        ]
-
-        for service in ip_services:
-            try:
-                ip_response = session.get(service["url"], timeout=3)
-                if ip_response.status_code == 200:
-                    ip_data = ip_response.json()
-                    return service["parser"](ip_data)
-            except Exception:
-                continue
-
-        return "IP获取失败"
-
-    # 验证代理格式是否正确
-    def _validate_proxy_format(self, proxy: str) -> bool:
-        try:
-            # 基本格式检查
-            if not proxy or proxy.strip() == "":
-                return False
-
-            # 检查是否包含协议
-            if not any(
-                proxy.startswith(protocol)
-                for protocol in ["http://", "https://", "socks5://", "socks4://"]
-            ):
-                return False
-
-            # 检查是否包含端口
-            if ":" not in proxy.split("://")[1]:
-                return False
-
-            return True
-        except Exception:
-            return False
-
-    # 测试代理列表的连通性
-    def test_proxy_list(
-        self, proxy_string: str, max_workers: int = 5
-    ) -> List[Dict[str, Any]]:
-        proxy_list = ProxyManager.parse_proxy_list(
-            proxy_string,
-            include_direct_fallback=True,
-        )
+    def test_proxy_list(self, proxy_string: str, max_workers: int = 10) -> list[dict[str, Any]]:
+        """并发测试代理列表，保持输入顺序"""
+        proxy_list = ProxyManager.parse_proxy_list(proxy_string, include_direct_fallback=True)
         if not proxy_list:
             proxy_list = ["none"]
 
-        results = []
-        # 使用线程池并发测试
+        # 哈希表保存结果，保持输入顺序
+        results: dict[str, dict[str, Any]] = {}
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_proxy = {
-                executor.submit(self.test_single_proxy, proxy): proxy
-                for proxy in proxy_list
+            fut_map: dict[Any, str] = {
+                executor.submit(self.test_single_proxy, p): p for p in proxy_list
             }
-
-            for future in as_completed(future_to_proxy):
+            for future in as_completed(fut_map):
+                proxy = fut_map[future]
                 try:
-                    result = future.result()
-                    results.append(result)
-                    loguru.logger.info(
-                        f"代理测试完成: {result['proxy']} - {result['status']}"
-                    )
+                    results[proxy] = future.result()
                 except Exception as e:
-                    loguru.logger.error(f"代理测试异常: {e}")
+                    results[proxy] = {
+                        "proxy": ProxyManager.mask_proxy_value(proxy) or proxy,
+                        "status": "failed",
+                        "response_time": None,
+                        "error": f"测试异常: {e}",
+                        "ip_info": None,
+                    }
 
-        # 按照原始顺序排序结果（直连在前，然后是代理）
-        def get_sort_key(result):
-            proxy = result["proxy"]
-            if proxy == "直连" or proxy.lower() in ["none", "direct"]:
-                return (0, proxy)
-            else:
-                try:
-                    raw_proxy = next(
-                        (
-                            item
-                            for item in proxy_list
-                            if ProxyManager.mask_proxy_value(item) == proxy
-                        ),
-                        proxy,
-                    )
-                    return (1, proxy_list.index(raw_proxy))
-                except ValueError:
-                    return (2, proxy)
+        # 按输入顺序输出（O(n) 哈希查找）
+        output: list[dict[str, Any]] = []
+        for p in proxy_list:
+            r = results.get(p)
+            if r:
+                output.append(r)
 
-        results.sort(key=get_sort_key)
-        return results
+        return output
 
-    # 格式化测试结果为可读文本
-    def format_test_results(self, results: List[Dict[str, Any]]) -> str:
-        output = []
-        output.append("代理连通性测试结果:")
-        output.append("=" * 50)
+    @staticmethod
+    def format_test_results(results: list[dict[str, Any]]) -> str:
+        """格式化为可读文本"""
+        lines: list[str] = []
+        lines.append("代理连通性测试结果")
+        lines.append("=" * 50)
 
-        success_count = 0
-        for i, result in enumerate(results, 1):
-            proxy = result["proxy"]
-            status = result["status"]
-            response_time = result["response_time"]
-            error = result["error"]
-            ip_info = result["ip_info"]
+        ok = 0
+        for i, r in enumerate(results, 1):
+            proxy = r["proxy"]
+            status = r["status"]
+            rt = r["response_time"]
+            err = r["error"]
+            ip = r["ip_info"]
 
             if status == "success":
-                output.append(f"✅ [{i}] {proxy}")
-                output.append(f"    响应时间: {response_time}ms")
-                if ip_info and ip_info != "IP获取失败":
-                    output.append(f"    出口IP: {ip_info}")
-                success_count += 1
+                lines.append(f"✅ [{i}] {proxy}")
+                lines.append(f"    响应时间: {rt}ms")
+                if ip:
+                    lines.append(f"    出口 IP: {ip}")
+                ok += 1
             elif status == "partial":
-                output.append(f"⚠️  [{i}] {proxy}")
-                output.append(f"    响应时间: {response_time}ms")
-                if ip_info and ip_info != "IP获取失败":
-                    output.append(f"    出口IP: {ip_info}")
-                output.append(f"    警告: {error}")
+                lines.append(f"⚠️  [{i}] {proxy}")
+                lines.append(f"    响应时间: {rt}ms")
+                if ip:
+                    lines.append(f"    出口 IP: {ip}")
+                lines.append(f"    警告: {err}")
             else:
-                output.append(f"❌ [{i}] {proxy}")
-                output.append(f"    错误: {error}")
+                lines.append(f"❌ [{i}] {proxy}")
+                lines.append(f"    错误: {err}")
+            lines.append("")
 
-            output.append("")
-
-        output.append("=" * 50)
-        output.append(f"测试统计: {success_count}/{len(results)} 个代理可用")
-        return "\n".join(output)
+        lines.append("=" * 50)
+        lines.append(f"测试统计: {ok}/{len(results)} 个代理可用")
+        return "\n".join(lines)
 
 
-def test_proxy_connectivity(proxy_string: str = "none", timeout: int = 10) -> str:
+def test_proxy_connectivity(proxy_string: str = "none", timeout: int = 5) -> str:
+    """便捷入口"""
     tester = ProxyTester(timeout=timeout)
     results = tester.test_proxy_list(proxy_string)
     return tester.format_test_results(results)

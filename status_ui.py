@@ -181,12 +181,6 @@ KEY_LABELS = {
     "proxyCooldownSeconds": "Proxy cooldown(s)",
     "proxyBackoffMaxSeconds": "Proxy backoff max(s)",
     "rateLimitDelayMs": "Rate limit delay(ms)",
-    "clash.instance_count": "Clash instances",
-    "clash.auto_switch_main": "Auto-switch main",
-    "clash.auto_switch_child": "Auto-switch child",
-    "clash.api_url": "Clash API URL",
-    "clash.api_secret": "Clash secret",
-    "clash.selected_node": "Selected node",
     "serverchanKey": "ServerChan",
     "barkToken": "Bark",
     "logLevel": "Log level",
@@ -200,16 +194,12 @@ def render_config(conf: dict) -> list[str]:
         return ["  (no config)"]
     rows = []
     for db_key in [
-        "clash.selected_node",
-        "clash.instance_count",
         "createRetryLimit",
         "createRequestBatchSize",
         "requestInterval",
         "proxyMaxConsecutiveFailures",
         "proxyCooldownSeconds",
         "proxyBackoffMaxSeconds",
-        "clash.auto_switch_main",
-        "clash.auto_switch_child",
         "logLevel",
         "https_proxy",
     ]:

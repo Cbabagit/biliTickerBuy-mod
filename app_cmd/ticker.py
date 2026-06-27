@@ -12,9 +12,9 @@ from util import get_application_path
 
 
 def exit_app_ui():
-    loguru.logger.info("程序退出")
+    loguru.logger.info("程序退�?)
     threading.Timer(2.0, lambda: os._exit(0)).start()
-    gr.Info("程序将在弹出提示后退出")
+    gr.Info("程序将在弹出提示后退�?)
 
 
 def shutdown_app_process(delay_seconds: float = 1.0) -> None:
@@ -28,7 +28,6 @@ def ticker_cmd(args: TickerCliArgs):
     from tab.problems import problems_tab
     from tab.settings import login_tab, setting_tab
     from tab.update import update_tab
-    from tab.clash import clash_tab
     from util.log.LogWeb import attach_log_routes
     from util import ConfigDB, GLOBAL_COOKIE_PATH, LOG_DIR, TEMP_PATH
     from util.log.LogConfig import loguru_config
@@ -64,9 +63,9 @@ def ticker_cmd(args: TickerCliArgs):
         <div class="btb-hero__notice">
             <span class="btb-hero__notice-mark">!</span>
             <span>
-                此项目完全开源免费。开源地址：
-                <a href="https://github.com/mikumifa/biliTickerBuy" target="_blank">https://github.com/mikumifa/biliTickerBuy</a>。
-                请勿用于盈利，否则后果自负。
+                此项目完全开源免费。开源地址�?
+                <a href="https://github.com/mikumifa/biliTickerBuy" target="_blank">https://github.com/mikumifa/biliTickerBuy</a>�?
+                请勿用于盈利，否则后果自负�?
             </span>
         </div>
     </section>
@@ -137,7 +136,7 @@ def ticker_cmd(args: TickerCliArgs):
                 ghost.className='btb-picker-ghost';ghost.tabIndex=-1;
                 var btn=document.createElement('button');
                 btn.type='button';btn.className='btb-picker-trigger';
-                btn.title='打开日历选择器';
+                btn.title='打开日历选择�?;
                 btn.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
                 var wrapper=document.createElement('div');
                 wrapper.className='btb-picker-wrap';
@@ -195,8 +194,6 @@ def ticker_cmd(args: TickerCliArgs):
                         load_go_settings_configs,
                         go_settings_load_outputs,
                     ) = go_settings_tab(header_ui)
-                with gr.Tab("🌐 Clash节点", id="clash", elem_id="btb-tab-clash"):
-                    clash_tab()
                 with gr.Tab("项目说明", id="guide", elem_id="btb-tab-guide"):
                     problems_tab()
                 with gr.Tab("软件更新", id="update", elem_id="btb-tab-update"):
