@@ -47,6 +47,7 @@ def get_application_tmp_path() -> str:
 
 TEMP_PATH: str = get_application_tmp_path()  # 临时目录
 os.environ["GRADIO_TEMP_DIR"] = TEMP_PATH
+STOP_SIGNAL_FILE: str = os.path.join(TEMP_PATH, "stop_all.signal")
 LOG_DIR: str = os.environ.get("BTB_LOG_DIR", os.path.join(EXE_PATH, "btb_logs"))
 os.makedirs(LOG_DIR, exist_ok=True)
 log_file_name = os.environ.get("BTB_APP_LOG_NAME", "app.log")
@@ -63,6 +64,7 @@ __all__ = [
     "set_main_request",
     "time_service",
     "LOG_DIR",
+    "STOP_SIGNAL_FILE",
     "GlobalStatusInstance",
     "runtime_state_reader",
     "runtime_state_writer",

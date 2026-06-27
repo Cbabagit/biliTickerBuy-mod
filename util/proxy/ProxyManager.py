@@ -127,6 +127,19 @@ class ProxyManager:
             cooldown_seconds=self.state_registry.cooldown_seconds,
         )
 
+    def append_proxy(self, proxy: str) -> None:
+        normalized = self.normalize_proxy_value(proxy)
+        if not normalized or normalized in self.proxy_list:
+            return
+        self.proxy_list.append(normalized)
+        from util.proxy.ProxyState import ProxyStateEntry
+        self.state_registry.states.append(
+            ProxyStateEntry(
+                raw_proxy=normalized,
+                display_name=self.mask_proxy_value(normalized),
+            )
+        )
+
     def snapshot(self) -> int:
         return self.now_proxy_idx
 

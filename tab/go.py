@@ -15,8 +15,10 @@ from tab.log import refresh_task_panel, render_task_manager_panel, visible_task_
 from task.buy import buy_new_terminal
 from util import (
     ConfigDB,
+    EXE_PATH,
     GlobalStatusInstance,
     LOG_DIR,
+    TEMP_PATH,
     runtime_state_reader,
     runtime_state_writer,
     time_service,
@@ -409,9 +411,33 @@ def go_start_tab():
     )
     upload_ui.select(file_select_handler, upload_ui, ticket_ui)
 
-    go_btn = gr.Button(
-        "开始抢票",
-        elem_classes="btb-strong-button",
+    with gr.Row():
+        go_btn = gr.Button(
+            "开始抢票",
+            elem_classes="btb-strong-button",
+            scale=3,
+        )
+        stop_all_btn = gr.Button(
+            "停止全部",
+            elem_classes="btb-task-button--stop",
+            scale=1,
+            min_width=120,
+        )
+
+    def stop_all_tasks():
+        import datetime
+        signal_path = os.path.join(TEMP_PATH, "stop_all.signal")
+        try:
+            with open(signal_path, "w") as f:
+                f.write(datetime.datetime.now().isoformat())
+            gr.Info("已发出停止信号，将等待各进程退出")
+        except Exception as e:
+            gr.Error(f"发送停止信号失败: {e}")
+
+    stop_all_btn.click(
+        fn=stop_all_tasks,
+        inputs=None,
+        outputs=None,
     )
     with gr.Column(
         visible=bool(visible_task_entries()),

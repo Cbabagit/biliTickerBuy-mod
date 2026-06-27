@@ -23,6 +23,7 @@ from cptoken import (
 from app_cmd.config.BuyConfig import BuyConfig
 from interface.project import fetch_project_payload
 from util.notifer.Notifier import NotifierManager
+from util import STOP_SIGNAL_FILE
 from util.proxy.ProxyBackoff import ProxyBackoff
 from util.proxy.ProxyApiProvider import fetch_proxy_api
 from util.proxy.ProxyManager import ProxyManager
@@ -202,6 +203,14 @@ def _format_reprepare_reason(reason: str) -> str:
     return f"重新准备订单，原因：{reason}"
 
 
+def _check_stop_signal() -> bool:
+    """检查父进程是否发出了停止信号。"""
+    if os.path.exists(STOP_SIGNAL_FILE):
+        logger.warning("检测到停止信号，准备退出")
+        return True
+    return False
+
+
 def buy_stream(config: BuyConfig):
     state = BuyStreamState()
 
@@ -362,6 +371,21 @@ def buy_stream(config: BuyConfig):
         )
         return False
 
+    def _ensure_proxy_has_fallback():
+        """确保代理池中有直连（none）作为最终 fallback，防止全部代理冷却后卡死。"""
+        none_yn = {p.lower() for p in _request.proxy_manager.proxy_list}
+        if "none" not in none_yn:
+            _request.proxy_manager.proxy_list.insert(0, "none")
+            from util.proxy.ProxyState import ProxyStateEntry
+            _request.proxy_manager.state_registry.states.insert(
+                0,
+                ProxyStateEntry(
+                    raw_proxy="none",
+                    display_name="直连",
+                ),
+            )
+            logger.info("代理池中无直连 fallback，已自动追加")
+
     isRunning = True
     tickets_info = json.loads(config.tickets_info)
     detail = tickets_info["detail"]
@@ -379,8 +403,8 @@ def buy_stream(config: BuyConfig):
         proxy_cooldown_seconds=config.proxy_cooldown_seconds,
     )
     proxy_backoff = ProxyBackoff()
-    is_hot_project = bool(tickets_info.get("is_hot_project", False))
-    # use_local_token = bool(config.use_local_token)
+    # 确保代理池有直连 fallback，防止全部代理冷却后卡死
+    _ensure_proxy_has_fallback()
     browser_window_state = generate_browser_window_state()
     token_payload = _build_token_payload(tickets_info)
     request_interval = max(1, int(config.interval or 1000))
@@ -394,45 +418,11 @@ def buy_stream(config: BuyConfig):
         return emit("status", message)
 
     def refresh_hot_and_warm():
-        nonlocal is_hot_project
         logger.info("预热/复检：开始拉取项目详情并预热连接")
-        payload = fetch_project_payload(
+        fetch_project_payload(
             request=_request, project_id=int(tickets_info["project_id"])
         )
-        if bool(payload["hotProject"]) and not is_hot_project:
-            is_hot_project = True
-            tickets_info["is_hot_project"] = True
-            logger.info("预热/复检：检测到 hotProject=True，已升级为 hot 抢票策略")
-        else:
-            logger.info("预热/复检完成。")
         _request.prewarm_h2_connection(f"{base_url}/")
-
-    # 循环内主动复检项目详情：按随机 create 次数触发纯拉取，与 100001 路径共享计数。
-    # fetch 落在两次 create 的 sleep 窗口，不与 create 并发。
-    refresh_min_count = max(0, int(config.refresh_interval_min_count))
-    refresh_max_count = max(0, int(config.refresh_interval_max_count))
-    refresh_count_enabled = (
-        refresh_max_count > 0 and refresh_min_count <= refresh_max_count
-    )
-    refresh_counter = 0
-    refresh_target = (
-        random.randint(refresh_min_count, refresh_max_count)
-        if refresh_count_enabled
-        else None
-    )
-
-    def _reset_refresh_counter():
-        """重置计数器并重抽下一次目标次数。定时与 100001 两路径共用。"""
-        nonlocal refresh_counter, refresh_target
-        refresh_counter = 0
-        if refresh_count_enabled:
-            refresh_target = random.randint(refresh_min_count, refresh_max_count)
-
-    def _on_100001():
-        refresh_hot_and_warm()
-        _reset_refresh_counter()
-
-    _request.set_100001_handler(_on_100001)
 
     refresh_hot_and_warm()
 
@@ -469,6 +459,9 @@ def buy_stream(config: BuyConfig):
             ),
         )
     while isRunning:
+        if _check_stop_signal():
+            logger.info("收到父进程停止信号，抢票进程退出")
+            sys.exit(0)
         try:
             request_result: dict | None = None
             ticket_collection_t = current_time_ms()
@@ -480,8 +473,6 @@ def buy_stream(config: BuyConfig):
                 user_agent_length=len(_request.get_user_agent()),
                 ticket_collection_t=ticket_collection_t,
             )
-            # if is_hot_project:
-            # hot
             yield emit("stage", "开始准备订单", BuyStreamUpdate(stage="订单准备"))
             prepare_ctoken_state = ticket_state.snapshot(now_ms=ticket_collection_t)
             token_payload["token"] = prepare_ctoken_state.generate_prepare_ctoken()
@@ -553,13 +544,17 @@ def buy_stream(config: BuyConfig):
                 url, payload = _prepare_create_request(
                     tickets_info,
                     order_token,
-                    is_hot_project=is_hot_project,
+                    is_hot_project=True,
                     request_result=request_result,
                     ticket_state=ticket_state,
                 )
                 while attempt <= batch_end:
                     if not isRunning:
                         yield emit("status", "抢票结束")
+                        break
+                    if _check_stop_signal():
+                        yield emit("status", "收到停止信号，退出")
+                        sys.exit(0)
                         break
                     should_sleep_before_next_attempt = False
                     try:
@@ -572,7 +567,6 @@ def buy_stream(config: BuyConfig):
                         proxy_backoff.reset()
                         err = int(ret.get("errno", ret.get("code")))
                         retry_outcome.set_response(err, ret)
-                        _request.handle_100001(err)
                         if _is_create_success(ret, err):
                             yield emit(
                                 "success",
@@ -690,15 +684,6 @@ def buy_stream(config: BuyConfig):
                         or terminal_result is not None
                     ):
                         break
-                    # 按随机 create 次数主动复检项目详情（纯拉取，落在 sleep 窗口，不与 create 并发）
-                    if refresh_count_enabled and refresh_target is not None:
-                        refresh_counter += 1
-                        if refresh_counter >= refresh_target:
-                            try:
-                                refresh_hot_and_warm()
-                            except Exception as exc:
-                                logger.warning(f"循环内项目详情复检失败（忽略）：{exc}")
-                            _reset_refresh_counter()
                     if should_sleep_before_next_attempt:
                         time.sleep(_jittered_delay_ms(request_interval))
 
