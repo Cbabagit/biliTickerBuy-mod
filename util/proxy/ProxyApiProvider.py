@@ -48,6 +48,16 @@ def build_proxy_api_url(api_url: str, *, count: int, protocol: str) -> str:
     )
 
 
+def build_plain_proxy_url(api_url: str) -> str:
+    """
+    纯文本模式：返回原始 URL 不做任何修改（参数已内置在 URL 中）。
+    """
+    target = str(api_url or "").strip()
+    if not target:
+        raise ProxyApiError("请先填写代理 API 地址")
+    return target
+
+
 def _iter_proxy_items(payload: Any) -> list[Any]:
     if isinstance(payload, dict):
         data = payload.get("data")
@@ -116,7 +126,7 @@ def parse_proxy_api_response(
         scheme = "http"
 
     proxies: list[str] = []
-    seen: set[str] = set()
+    seen_hp: set[str] = set()
     for item in _iter_proxy_items(payload):
         host_port = _extract_host_port(item)
         if not host_port:
@@ -126,14 +136,50 @@ def parse_proxy_api_response(
             continue
         auth = f"{username}:{password}@" if username and password else ""
         proxy = f"{scheme}://{auth}{host}:{port}"
-        key = proxy.lower()
-        if key in seen:
+        hp_key = _hostport_key(proxy)
+        if hp_key in seen_hp:
             continue
-        seen.add(key)
+        seen_hp.add(hp_key)
         proxies.append(proxy)
 
     if not proxies:
         raise ProxyApiError("代理 API 返回成功，但没有解析到代理 IP 和端口")
+    return proxies
+
+
+def _hostport_key(proxy_url: str) -> str:
+    """提取 scheme://host:port 作为去重键，忽略认证信息。"""
+    text = proxy_url.strip().lower()
+    if "://" not in text:
+        return text
+    scheme, remainder = text.split("://", 1)
+    if "@" in remainder:
+        remainder = remainder.rsplit("@", 1)[1]
+    hostport = remainder.split("/")[0]  # 去掉路径
+    return f"{scheme}://{hostport}"
+
+
+def parse_plain_proxy_response(text: str) -> list[str]:
+    """
+    纯文本模式：每行一个完整代理 URL（如 socks5://user:pass@host:port）。
+    按 host:port 去重（相同出口保留第一条）。
+    """
+    proxies: list[str] = []
+    seen: set[str] = set()
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("//"):
+            continue
+        # 验证是否有 scheme:// 结构
+        if "://" not in line:
+            continue
+        key = _hostport_key(line)
+        if key in seen:
+            continue
+        seen.add(key)
+        proxies.append(line)
+    if not proxies:
+        raise ProxyApiError("纯文本代理 API 未返回有效的代理 URL")
     return proxies
 
 
@@ -145,12 +191,22 @@ def fetch_proxy_api(
     username: str = "",
     password: str = "",
     timeout: int = 15,
+    format_type: str = "json",
 ) -> ProxyApiResult:
-    request_url = build_proxy_api_url(api_url, count=count, protocol=protocol)
+    if format_type == "plain":
+        request_url = build_plain_proxy_url(api_url)
+    else:
+        request_url = build_proxy_api_url(api_url, count=count, protocol=protocol)
+
     response = requests.request(
         "GET", request_url, headers={}, data={}, timeout=timeout
     )
     response.raise_for_status()
+
+    if format_type == "plain":
+        proxies = parse_plain_proxy_response(response.text)
+        return ProxyApiResult(proxies=proxies, response={"_raw": response.text})
+
     payload = response.json()
     if not isinstance(payload, dict):
         raise ProxyApiError("代理 API 未返回 JSON 对象")

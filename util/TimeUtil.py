@@ -1,7 +1,35 @@
+from __future__ import annotations
+
+import inspect
 import time
+from dataclasses import dataclass
+from typing import Iterable
 
 import ntplib
 from loguru import logger
+
+# NTP 服务器优先级：阿里云 → 国家授时中心
+NTP_SERVERS = ["ntp1.aliyun.com", "ntp.ntsc.ac.cn"]
+
+
+def sync_ntp(max_retries_per_server: int = 3) -> float:
+    """逐次尝试 NTP 服务器，返回 timeoffset（秒，本地时间 - NTP 时间）。"""
+    client = ntplib.NTPClient()
+    for server in NTP_SERVERS:
+        for attempt in range(max_retries_per_server):
+            try:
+                response = client.request(server, version=4)
+                offset = -response.offset  # response.offset = NTP - local, 取反
+                logger.info(
+                    f"NTP 时间同步成功: {server}，偏差 {offset:.3f} 秒"
+                )
+                return offset
+            except Exception:
+                logger.warning(f"NTP {server} 第 {attempt + 1} 次失败")
+                if attempt < max_retries_per_server - 1:
+                    time.sleep(0.5)
+    logger.warning("NTP 时间同步全部失败，使用本地时间")
+    return 0.0
 
 
 def current_time_ms(*, timeoffset: float = 0, base_ms: int | None = None) -> int:
@@ -14,37 +42,34 @@ def current_time_ms(*, timeoffset: float = 0, base_ms: int | None = None) -> int
 
 
 class TimeUtil:
-    # NTP服务器默认为ntp.aliyun.com, 可根据实际情况修改
-    def __init__(self, _ntp_server="ntp.aliyun.com") -> None:
-        self.ntp_server = _ntp_server
+    def __init__(self, _ntp_server: str | None = None) -> None:
         self.client = ntplib.NTPClient()
         self.timeoffset: float = 0
 
+        if _ntp_server:
+            self.ntp_servers = [_ntp_server]
+        else:
+            self.ntp_servers = list(NTP_SERVERS)
+
     def compute_timeoffset(self) -> str:
-        """
-        返回的timeoffset单位为秒
-        """
-        # NTP时间请求有可能会超时失败, 设定三次重试机会
-        response = None
-        for i in range(0, 3):
-            try:
-                response = self.client.request(self.ntp_server, version=4)
-                break
-            except Exception:
-                logger.warning("第" + str(i + 1) + "次获取NTP时间失败, 尝试重新获取")
-                if i == 2:
-                    return "error"
-                time.sleep(0.5)
-        if response is None:
-            logger.error("无法获取NTP时间")
-            return "error"
-        # response.offset 为[NTP时钟源 - 设备时钟]的偏差, 使用时需要取反
-        return format(-(response.offset), ".5f")
+        for server in self.ntp_servers:
+            for i in range(3):
+                try:
+                    response = self.client.request(server, version=4)
+                    offset = -response.offset
+                    logger.info(f"NTP 时间同步成功: {server}，偏差 {offset:.3f} 秒")
+                    return format(offset, ".5f")
+                except Exception:
+                    logger.warning(
+                        f"NTP {server} 第 {i + 1} 次获取失败"
+                    )
+                    if i == 2:
+                        break
+                    time.sleep(0.5)
+        logger.warning("NTP 时间同步全部失败，使用本地时间")
+        return "error"
 
     def set_timeoffset(self, _timeoffset: str) -> None:
-        """
-        传入的timeoffset单位为秒
-        """
         if _timeoffset == "error":
             self.timeoffset = 0
             logger.warning("NTP时间同步失败, 使用本地时间")
@@ -52,7 +77,4 @@ class TimeUtil:
             self.timeoffset = float(_timeoffset)
 
     def get_timeoffset(self) -> float:
-        """
-        获取到的timeoffset单位为秒
-        """
         return self.timeoffset

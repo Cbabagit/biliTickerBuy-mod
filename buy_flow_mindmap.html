@@ -1,0 +1,297 @@
+<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>biliTickerBuy 完整抢票逻辑 & 退避体系</title>
+<style>
+  :root { color-scheme: light dark; --bg:#f8fafc; --fg:#172033; --muted:#5b6475; --line:#64748b; --neutral:#e2e8f0; --input:#bfdbfe; --process:#c7d2fe; --storage:#99f6e4; --external:#fde68a; --risk:#fecaca; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f172a; --fg:#e5e7eb; --muted:#a3adbd; --line:#94a3b8; --neutral:#334155; --input:#1d4ed8; --process:#4338ca; --storage:#0f766e; --external:#92400e; --risk:#991b1b; } }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 ui-sans-serif,system-ui,sans-serif; }
+  main { max-width:1200px; margin:32px auto; padding:0 20px; }
+  svg { width:100%; height:auto; display:block; }
+  .title { font-size:20px; font-weight:650; fill:var(--fg); }
+  .sub { font-size:13px; fill:var(--muted); }
+  .label { font-size:13px; font-weight:600; fill:var(--fg); }
+  .small { font-size:11px; fill:var(--muted); }
+  .node { stroke:var(--line); stroke-width:1; }
+  .neutral { fill:var(--neutral); }
+  .input { fill:var(--input); }
+  .process { fill:var(--process); }
+  .storage { fill:var(--storage); }
+  .external { fill:var(--external); }
+  .risk { fill:var(--risk); }
+  .edge { stroke:var(--line); stroke-width:1.5; fill:none; }
+  .dashed { stroke:var(--line); stroke-width:1; fill:none; stroke-dasharray:4 4; }
+  .bold { stroke-width:2.5; }
+  .arrow { marker-end:url(#arrow); }
+  .arrow-dashed { marker-end:url(#arrow); stroke-dasharray:4 4; }
+</style>
+<svg viewBox="0 0 1180 1680" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="var(--line)"/></marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#22c55e"/></marker>
+    <marker id="arrow-red" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#ef4444"/></marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#f59e0b"/></marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="590" y="36" text-anchor="middle" class="title">biliTickerBuy 完整抢票逻辑 &amp; 退避体系</text>
+  <text x="590" y="56" text-anchor="middle" class="sub">基于 buy_stream() · BuyStreamWorker · BiliRequest 三层结构</text>
+
+  <!-- ============ PHASE 1: INIT ============ -->
+  <rect class="node input" rx="8" x="440" y="75" width="300" height="36"/>
+  <text x="590" y="98" text-anchor="middle" class="label">① 启动 &amp; 预热 (Init)</text>
+
+  <rect class="node neutral" rx="6" x="80" y="130" width="260" height="50"/>
+  <text x="210" y="150" text-anchor="middle" class="label">创建 BiliRequest</text>
+  <text x="210" y="166" text-anchor="middle" class="small">加载 Cookie / 代理池 / Header</text>
+
+  <rect class="node neutral" rx="6" x="450" y="130" width="260" height="50"/>
+  <text x="580" y="150" text-anchor="middle" class="label">解析 tickets_info JSON</text>
+  <text x="580" y="166" text-anchor="middle" class="small">取 detail / cookies / buyer_info</text>
+
+  <rect class="node neutral" rx="6" x="820" y="130" width="260" height="50"/>
+  <text x="950" y="150" text-anchor="middle" class="label">初始化 ProxyBackoff</text>
+  <text x="950" y="166" text-anchor="middle" class="small">min=0.25s max=0.45s 预备</text>
+
+  <!-- arrows phase1 -->
+  <path class="edge arrow" d="M590,111 L210,130"/>
+  <path class="edge arrow" d="M590,111 L580,130"/>
+  <path class="edge arrow" d="M590,111 L950,130"/>
+
+  <rect class="node external" rx="6" x="310" y="200" width="260" height="50"/>
+  <text x="440" y="220" text-anchor="middle" class="label">预热网络连接</text>
+  <text x="440" y="236" text-anchor="middle" class="small">fetch_project_payload + prewarm_h2</text>
+  <path class="edge arrow" d="M210,180 L210,195 L440,195 L440,200"/>
+  <path class="edge arrow" d="M580,180 L440,200"/>
+  <path class="edge arrow" d="M950,180 L950,195 L440,195"/>
+
+  <!-- ensure_proxy_has_fallback -->
+  <rect class="node process" rx="6" x="620" y="200" width="230" height="36"/>
+  <text x="735" y="222" text-anchor="middle" class="label">✓ 确保直连 fallback</text>
+  <path class="dashed" d="M520,217 L620,218"/>
+
+  <!-- ============ PHASE 2: WAIT ============ -->
+  <rect class="node input" rx="8" x="440" y="270" width="300" height="36"/>
+  <text x="590" y="293" text-anchor="middle" class="label">② 等待开票 (Wait Until Start)</text>
+
+  <rect class="node neutral" rx="6" x="310" y="325" width="230" height="50"/>
+  <text x="425" y="345" text-anchor="middle" class="label">解析 time_start</text>
+  <text x="425" y="361" text-anchor="middle" class="small">支持多种时间格式</text>
+
+  <rect class="node neutral" rx="6" x="560" y="325" width="230" height="50"/>
+  <text x="675" y="345" text-anchor="middle" class="label">倒计时循环</text>
+  <text x="675" y="361" text-anchor="middle" class="small">每隔 COUNTDOWN_REPORT 段内输出</text>
+
+  <path class="edge arrow" d="M590,306 L425,325"/>
+  <path class="edge arrow" d="M590,306 L675,325"/>
+
+  <!-- warmup at 5s -->
+  <rect class="node risk" rx="6" x="830" y="325" width="200" height="50"/>
+  <text x="930" y="342" text-anchor="middle" class="label">倒计时 ≤5s</text>
+  <text x="930" y="358" text-anchor="middle" class="small">再次 refresh_hot_and_warm()</text>
+  <path class="dashed arrow-dashed" d="M790,350 L830,350"/>
+
+  <!-- ============ PHASE 3: PREPARE ============ -->
+  <rect class="node input" rx="8" x="430" y="400" width="320" height="36"/>
+  <text x="590" y="423" text-anchor="middle" class="label">③ 订单准备 (Prepare Order)</text>
+
+  <rect class="node process" rx="6" x="90" y="460" width="260" height="50"/>
+  <text x="220" y="480" text-anchor="middle" class="label">生成 browser_window_state</text>
+  <text x="220" y="496" text-anchor="middle" class="small">cptoken 浏览器指纹模拟</text>
+
+  <rect class="node process" rx="6" x="430" y="460" width="300" height="50"/>
+  <text x="580" y="480" text-anchor="middle" class="label">POST /api/ticket/order/prepare</text>
+  <text x="580" y="496" text-anchor="middle" class="small">含 ctoken 令牌请求</text>
+
+  <rect class="node process" rx="6" x="810" y="460" width="280" height="50"/>
+  <text x="950" y="480" text-anchor="middle" class="label">解析 prepare token</text>
+  <text x="950" y="496" text-anchor="middle" class="small">提取 order_token</text>
+
+  <path class="edge arrow" d="M590,436 L220,460"/>
+  <path class="edge arrow" d="M590,436 L580,460"/>
+  <path class="edge arrow" d="M590,436 L950,460"/>
+
+  <!-- token fail → continue -->
+  <text x="950" y="526" text-anchor="middle" class="small">❌ 无 token → continue</text>
+
+  <!-- ============ PHASE 4: CREATE ============ -->
+  <rect class="node input" rx="8" x="430" y="545" width="320" height="36"/>
+  <text x="590" y="568" text-anchor="middle" class="label">④ 创建订单 (Create Order) — 核心循环</text>
+
+  <!-- retry loop visual -->
+  <rect class="node risk" rx="6" x="370" y="600" width="420" height="50"/>
+  <text x="580" y="618" text-anchor="middle" class="label">while attempt ≤ effective_retry_limit (默认 30次)</text>
+  <text x="580" y="634" text-anchor="middle" class="small">内层 batch: concurrent effective_batch_size (默认 3)</text>
+
+  <path class="edge arrow" d="M590,581 L580,600"/>
+
+  <rect class="node process" rx="6" x="370" y="670" width="420" height="44"/>
+  <text x="580" y="690" text-anchor="middle" class="label">POST /api/ticket/order/create</text>
+  <text x="580" y="706" text-anchor="middle" class="small">含 ctoken + order_token + 购票人/配送信息</text>
+
+  <path class="edge arrow" d="M580,650 L580,670"/>
+
+  <!-- success flow -->
+  <path class="edge bold" marker-end="url(#arrow-green)" d="M580,714 L580,760" stroke="#22c55e"/>
+  <rect class="node storage" rx="6" x="430" y="760" width="300" height="36"/>
+  <text x="580" y="782" text-anchor="middle" class="label">✅ 成功 → 跳支付流程 (Phase ⑤)</text>
+  <path class="edge bold arrow" stroke="#22c55e" marker-end="url(#arrow-green)" d="M580,796 L580,835"/>
+
+  <!-- ============ ERROR HANDLING BRANCHES ============ -->
+  <text x="100" y="675" text-anchor="middle" class="title" font-size="16px">异常分支 → 退避!</text>
+
+  <!-- Branch 1: BiliRateLimitError -->
+  <rect class="node risk" rx="6" x="20" y="700" width="240" height="80"/>
+  <text x="140" y="720" text-anchor="middle" class="label">🔥 BiliRateLimitError</text>
+  <text x="140" y="738" text-anchor="middle" class="small">HTTP 429 server 限流</text>
+  <text x="140" y="754" text-anchor="middle" class="small" font-weight="bold">sleep(±30% 抖动)</text>
+  <text x="140" y="770" text-anchor="middle" class="small">rate_limit_delay_ms 用户设置值</text>
+  <path class="edge dashed" d="M370,692 L260,740"/>
+
+  <!-- Branch 2: RequestException (proxy) -->
+  <rect class="node risk" rx="6" x="20" y="800" width="240" height="95"/>
+  <text x="140" y="820" text-anchor="middle" class="label">🌐 RequestException</text>
+  <text x="140" y="838" text-anchor="middle" class="small">网络/连接/超时异常</text>
+  <text x="140" y="856" text-anchor="middle" class="small" font-weight="bold">→ handle_proxy_failure()</text>
+  <text x="140" y="872" text-anchor="middle" class="small">标记失败 → 切换 / 冷却</text>
+  <path class="edge dashed" d="M370,692 L260,847"/>
+
+  <!-- Branch 3: JSONDecodeError -->
+  <rect class="node risk" rx="6" x="20" y="915" width="240" height="70"/>
+  <text x="140" y="935" text-anchor="middle" class="label">📄 JSONDecodeError</text>
+  <text x="140" y="953" text-anchor="middle" class="small">→ handle_non_json_response()</text>
+  <text x="140" y="969" text-anchor="middle" class="small">412 风控 → proxy failure</text>
+  <path class="edge dashed" d="M370,692 L260,950"/>
+
+  <!-- Branch 4: errono 100051 -->
+  <rect class="node risk" rx="6" x="20" y="1005" width="240" height="60"/>
+  <text x="140" y="1025" text-anchor="middle" class="label">🪙 errno=100051 token过期</text>
+  <text x="140" y="1041" text-anchor="middle" class="small">→ 跳出循环 → 重新 prepare</text>
+  <path class="edge dashed" d="M370,692 L260,1035"/>
+
+  <!-- Branch 5: 900001/900002 -->
+  <rect class="node external" rx="6" x="20" y="1085" width="240" height="60"/>
+  <text x="140" y="1105" text-anchor="middle" class="label">⚠ 900001/900002 中间层限流</text>
+  <text x="140" y="1121" text-anchor="middle" class="small">不 sleep，直接继续</text>
+  <path class="edge dashed" d="M370,692 L260,1115"/>
+
+  <!-- Branch 6: terminal rules -->
+  <rect class="node external" rx="6" x="20" y="1165" width="240" height="60"/>
+  <text x="140" y="1185" text-anchor="middle" class="label">🚫 终止规则 errno</text>
+  <text x="140" y="1201" text-anchor="middle" class="small">票已售罄 / 不可售 等</text>
+  <path class="edge dashed" d="M370,692 L260,1195"/>
+
+  <!-- Branch 7: normal retry sleep -->
+  <rect class="node neutral" rx="6" x="20" y="1245" width="240" height="55"/>
+  <text x="140" y="1265" text-anchor="middle" class="label">⏱ 普通重试间隔</text>
+  <text x="140" y="1281" text-anchor="middle" class="small">sleep(±30% 抖动)</text>
+  <text x="140" y="1297" text-anchor="middle" class="small">request_interval (默认 1000ms)</text>
+  <path class="edge dashed" d="M370,692 L260,1272"/>
+
+  <!-- ============ OUTER LOOP.continue ============ -->
+  <rect class="node neutral" rx="6" x="1000" y="700" width="160" height="40"/>
+  <text x="1080" y="725" text-anchor="middle" class="label">outer continue</text>
+  <path class="dashed arrow-dashed" d="M790,692 L1000,720"/>
+
+  <rect class="node neutral" rx="6" x="1000" y="760" width="160" height="40"/>
+  <text x="1080" y="785" text-anchor="middle" class="label">outer for 重试</text>
+  <path class="dashed arrow-dashed" d="M790,714 L1000,780"/>
+
+  <!-- ============ PHASE 5: PAYMENT ============ -->
+  <rect class="node input" rx="8" x="430" y="840" width="320" height="36"/>
+  <text x="590" y="863" text-anchor="middle" class="label">⑤ 抢票成功 → 支付流程</text>
+
+  <rect class="node storage" rx="6" x="350" y="895" width="220" height="44"/>
+  <text x="460" y="913" text-anchor="middle" class="label">通知推送</text>
+  <text x="460" y="929" text-anchor="middle" class="small">Server酱 / Bark / PushPlus</text>
+
+  <rect class="node storage" rx="6" x="600" y="895" width="220" height="44"/>
+  <text x="710" y="913" text-anchor="middle" class="label">支付二维码</text>
+  <text x="710" y="929" text-anchor="middle" class="small">自动打开 / 弹窗显示</text>
+
+  <path class="edge arrow" d="M590,876 L460,895"/>
+  <path class="edge arrow" d="M590,876 L710,895"/>
+
+  <!-- ============ DEEP DIVE: PROXY FAILURE ============ -->
+  <text x="590" y="1000" text-anchor="middle" class="title" font-size="17px">——————————————————</text>
+  <text x="590" y="1025" text-anchor="middle" class="title" font-size="17px">🐾 代理退避深潜 (handle_proxy_failure)</text>
+
+  <rect class="node process" rx="6" x="45" y="1055" width="260" height="44"/>
+  <text x="175" y="1075" text-anchor="middle" class="label">1. mark_current_proxy_failure</text>
+  <text x="175" y="1091" text-anchor="middle" class="small">计数 → 连续失败 ≥ threshold=2</text>
+
+  <rect class="node process" rx="6" x="45" y="1115" width="260" height="44"/>
+  <text x="175" y="1135" text-anchor="middle" class="label">2. 冷却判定</text>
+  <text x="175" y="1151" text-anchor="middle" class="small">冷却时间 180s，标记 unavailable</text>
+
+  <rect class="node process" rx="6" x="45" y="1175" width="260" height="44"/>
+  <text x="175" y="1195" text-anchor="middle" class="label">3. switch_proxy()</text>
+  <text x="175" y="1211" text-anchor="middle" class="small">轮询下一个可用代理</text>
+
+  <rect class="node process" rx="6" x="45" y="1235" width="260" height="44"/>
+  <text x="175" y="1255" text-anchor="middle" class="label">4. 替补：replenish_proxy_pool</text>
+  <text x="175" y="1271" text-anchor="middle" class="small">调用 proxy_api_url 批量获取</text>
+
+  <rect class="node process" rx="6" x="45" y="1295" width="260" height="58"/>
+  <text x="175" y="1313" text-anchor="middle" class="label">5. 全池冷却 → 最后退避</text>
+  <text x="175" y="1329" text-anchor="middle" class="small">ProxyBackoff.next_delay_seconds()</text>
+  <text x="175" y="1343" text-anchor="middle" class="small">random.uniform(0.25, 0.45)s</text>
+
+  <path class="edge arrow" d="M175,1099 L175,1115"/>
+  <path class="edge arrow" d="M175,1159 L175,1175"/>
+  <path class="edge arrow" d="M175,1219 L175,1235"/>
+  <path class="edge arrow" d="M175,1279 L175,1295"/>
+
+  <!-- proxy state visual -->
+  <rect class="node input" rx="6" x="380" y="1055" width="240" height="36"/>
+  <text x="500" y="1077" text-anchor="middle" class="label">直连 (none) 强制 fallback</text>
+  <path class="dashed" d="M305,1045 L380,1073"/>
+
+  <rect class="node neutral" rx="6" x="380" y="1115" width="240" height="50"/>
+  <text x="500" y="1133" text-anchor="middle" class="label">ProxyBackoff 状态</text>
+  <text x="500" y="1149" text-anchor="middle" class="small">exhausted_rounds 累计</text>
+  <text x="500" y="1163" text-anchor="middle" class="small">should_notify() 一报推送</text>
+  <path class="dashed" d="M305,1115 L380,1140"/>
+
+  <!-- ============ DEEP DIVE: LAYERED BACKOFF MAP ============ -->
+  <text x="590" y="1400" text-anchor="middle" class="title" font-size="17px">——————————————————</text>
+  <text x="590" y="1425" text-anchor="middle" class="title" font-size="17px">📊 全量退避对照表</text>
+
+  <!-- Table -->
+  <rect class="node neutral" rx="4" x="80" y="1445" width="240" height="30"/><text x="200" y="1465" text-anchor="middle" class="label">触发场景</text>
+  <rect class="node neutral" rx="4" x="320" y="1445" width="220" height="30"/><text x="430" y="1465" text-anchor="middle" class="label">退避值</text>
+  <rect class="node neutral" rx="4" x="540" y="1445" width="260" height="30"/><text x="670" y="1465" text-anchor="middle" class="label">特点</text>
+  <rect class="node neutral" rx="4" x="800" y="1445" width="280" height="30"/><text x="940" y="1465" text-anchor="middle" class="label">代码位置</text>
+
+  <rect class="node" rx="4" x="80" y="1475" width="240" height="28" fill="var(--risk)"/><text x="200" y="1493" text-anchor="middle" class="label">HTTP 429 限流</text>
+  <rect class="node" rx="4" x="320" y="1475" width="220" height="28" fill="var(--risk)"/><text x="430" y="1493" text-anchor="middle" class="label">rate_limit_delay_ms ±30%</text>
+  <rect class="node" rx="4" x="540" y="1475" width="260" height="28" fill="var(--neutral)"/><text x="670" y="1493" text-anchor="middle" class="label">单次固定值+均匀抖动</text>
+  <rect class="node" rx="4" x="800" y="1475" width="280" height="28" fill="var(--neutral)"/><text x="940" y="1493" text-anchor="middle" class="small">buy.py L672,L845</text>
+
+  <rect class="node" rx="4" x="80" y="1503" width="240" height="28" fill="var(--risk)"/><text x="200" y="1521" text-anchor="middle" class="label">RequestException</text>
+  <rect class="node" rx="4" x="320" y="1503" width="220" height="28" fill="var(--risk)"/><text x="430" y="1521" text-anchor="middle" class="label">→ 切换代理 / 0.25~0.45s</text>
+  <rect class="node" rx="4" x="540" y="1503" width="260" height="28" fill="var(--neutral)"/><text x="670" y="1521" text-anchor="middle" class="label">代理池轮转 + 最后退避</text>
+  <rect class="node" rx="4" x="800" y="1503" width="280" height="28" fill="var(--neutral)"/><text x="940" y="1521" text-anchor="middle" class="small">buy.py handle_proxy_failure</text>
+
+  <rect class="node" rx="4" x="80" y="1531" width="240" height="28" fill="var(--risk)"/><text x="200" y="1549" text-anchor="middle" class="label">412 风控</text>
+  <rect class="node" rx="4" x="320" y="1531" width="220" height="28" fill="var(--risk)"/><text x="430" y="1549" text-anchor="middle" class="label">→ proxy failure 链路</text>
+  <rect class="node" rx="4" x="540" y="1531" width="260" height="28" fill="var(--neutral)"/><text x="670" y="1549" text-anchor="middle" class="label">触发代理冷却 + 切换</text>
+  <rect class="node" rx="4" x="800" y="1531" width="280" height="28" fill="var(--neutral)"/><text x="940" y="1549" text-anchor="middle" class="small">handle_non_json_response</text>
+
+  <rect class="node" rx="4" x="80" y="1559" width="240" height="28" fill="var(--external)"/><text x="200" y="1577" text-anchor="middle" class="label">普通重试间隔</text>
+  <rect class="node" rx="4" x="320" y="1559" width="220" height="28" fill="var(--external)"/><text x="430" y="1577" text-anchor="middle" class="label">request_interval ±30%</text>
+  <rect class="node" rx="4" x="540" y="1559" width="260" height="28" fill="var(--neutral)"/><text x="670" y="1577" text-anchor="middle" class="label">每次错误重试间 sleep</text>
+  <rect class="node" rx="4" x="800" y="1559" width="280" height="28" fill="var(--neutral)"/><text x="940" y="1577" text-anchor="middle" class="small">buy.py L710</text>
+
+  <rect class="node" rx="4" x="80" y="1587" width="240" height="28" fill="var(--process)"/><text x="200" y="1605" text-anchor="middle" class="label">H2 recovery (底层)</text>
+  <rect class="node" rx="4" x="320" y="1587" width="220" height="28" fill="var(--process)"/><text x="430" y="1605" text-anchor="middle" class="label">2次重试 → BiliConnectionError</text>
+  <rect class="node" rx="4" x="540" y="1587" width="260" height="28" fill="var(--neutral)"/><text x="670" y="1605" text-anchor="middle" class="label">httpx 超时或协议异常</text>
+  <rect class="node" rx="4" x="800" y="1587" width="280" height="28" fill="var(--neutral)"/><text x="940" y="1605" text-anchor="middle" class="small">BiliRequest._send_with_h2_recovery</text>
+
+  <rect class="node" rx="4" x="80" y="1615" width="240" height="28" fill="var(--neutral)"/><text x="200" y="1633" text-anchor="middle" class="label">代理池枯竭</text>
+  <rect class="node" rx="4" x="320" y="1615" width="220" height="28" fill="var(--neutral)"/><text x="430" y="1633" text-anchor="middle" class="label">→ API replenish / 直连</text>
+  <rect class="node" rx="4" x="540" y="1615" width="260" height="28" fill="var(--neutral)"/><text x="670" y="1633" text-anchor="middle" class="label">replenish 成功清零 + reset</text>
+  <rect class="node" rx="4" x="800" y="1615" width="280" height="28" fill="var(--neutral)"/><text x="940" y="1633" text-anchor="middle" class="small">handle_proxy_failure + buy.py</text>
+
+</svg>
+</main>

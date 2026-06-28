@@ -20,6 +20,7 @@ def buy_cmd(args: BuyCliArgs):
         TerminalRenderContext,
         create_terminal_renderer,
         render_message_stream,
+        sync_ntp_once,
     )
     from loguru import logger
 
@@ -223,6 +224,28 @@ def buy_cmd(args: BuyCliArgs):
     start_parent_watchdog()
     if enable_console_log:
         logger.info(f"抢票日志路径：{log_file}")
+
+    # 终端窗口启动后立即输出，避免 refresh_hot_and_warm 网络阻塞期空白
+    if use_terminal_renderer:
+        print(f"[抢票终端] 配置已加载：{filename_only} | 日志：{log_file}", flush=True)
+        print("[抢票终端] 正在预热网络连接，请稍候...", flush=True)
+
+    # 每次开始抢票前校准一次 NTP 时间
+    try:
+        ntp_offset = sync_ntp_once()
+        time_offset_str = f"{ntp_offset:.3f}" if ntp_offset != 0 else "0.000"
+        if use_terminal_renderer:
+            status = "✓" if ntp_offset != 0 else "⚠ 失败"
+            print(f"[NTP] {status} 偏差 {time_offset_str} 秒", flush=True)
+        else:
+            if ntp_offset == 0:
+                logger.warning("NTP 时间同步失败，使用本地时间")
+            else:
+                logger.info(f"NTP 时间偏差: {time_offset_str} 秒")
+    except Exception:
+        if use_terminal_renderer:
+            print("[NTP] ⚠ 同步失败，使用本地时间", flush=True)
+
     try:
         if use_terminal_renderer:
             run_with_terminal_renderer(tickets_info)

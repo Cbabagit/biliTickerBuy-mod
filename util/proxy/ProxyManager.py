@@ -64,19 +64,39 @@ class ProxyManager:
 
         normalized: list[str] = []
         seen: set[str] = set()
+        has_none = False
         for item in proxy_list:
             if not item:
                 continue
-            key = item.lower()
-            if key in seen:
+            if item == "none":
+                has_none = True
+                if "none" in seen:
+                    continue
+                seen.add("none")
+                normalized.append(item)
                 continue
-            seen.add(key)
+            hp_key = cls._hostport_key(item)
+            if hp_key in seen:
+                continue
+            seen.add(hp_key)
             normalized.append(item)
 
-        if include_direct_fallback and "none" not in seen:
+        if include_direct_fallback and not has_none:
             normalized.insert(0, "none")
 
         return normalized
+
+    @staticmethod
+    def _hostport_key(proxy_url: str) -> str:
+        """提取 scheme://host:port 作为去重键，忽略认证信息。"""
+        text = proxy_url.strip().lower()
+        if "://" not in text:
+            return text
+        scheme, remainder = text.split("://", 1)
+        if "@" in remainder:
+            remainder = remainder.rsplit("@", 1)[1]
+        hostport = remainder.split("/")[0]
+        return f"{scheme}://{hostport}"
 
     @staticmethod
     def mask_proxy_value(proxy: str) -> str:

@@ -186,6 +186,17 @@ class Buy:
         )
 
 
+def _jittered_delay_ms(base_ms: int) -> float:
+    """
+    在 base_ms 上叠加 ±30% 均匀随机抖动，返回秒（float）。
+    例如 base_ms=1000 → 返回 0.7~1.3 秒。
+    """
+    if base_ms <= 0:
+        return 0.0
+    jitter = base_ms * random.uniform(-0.3, 0.3)
+    return max(0.0, (base_ms + jitter) / 1000.0)
+
+
 def _extract_prepare_token(result: dict | None) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -424,12 +435,23 @@ def buy_stream(config: BuyConfig):
         )
         _request.prewarm_h2_connection(f"{base_url}/")
 
+    yield emit(
+        "status",
+        "正在预热网络连接...",
+        BuyStreamUpdate(
+            stage="预热连接",
+            current_proxy=_request.current_proxy_status(),
+            proxy_pool=_request.proxy_pool_status(),
+        ),
+    )
+
     refresh_hot_and_warm()
 
     yield emit(
         "proxy",
         f"当前代理: {_request.current_proxy_status()}",
         BuyStreamUpdate(
+            stage="等待开票",
             current_proxy=_request.current_proxy_status(),
             proxy_pool=_request.proxy_pool_status(),
         ),

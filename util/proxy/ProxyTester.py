@@ -3,7 +3,7 @@
 优化点:
 - B站延迟 + 出口 IP 并行获取，消除串行等待
 - 缩短超时：B站 5s / IP 2s
-- 无 Session 开销，直接 requests.get
+- 使用 httpx 代替 requests，原生支持 SOCKS5 带认证代理
 - 高并发：默认 max_workers=10
 - 排序 O(n)：哈希表映射，避免 index() 遍历
 """
@@ -14,7 +14,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-import requests
+import httpx
 
 from util.proxy.ProxyManager import ProxyManager
 
@@ -69,70 +69,77 @@ class ProxyTester:
             result["error"] = "代理格式无效"
             return result
 
-        proxies: dict[str, str] = {} if proxy_for_conn == "none" else {"http": proxy_for_conn, "https": proxy_for_conn}
-
-        # ---- 内部任务：B站延迟 ----
+        # ---- 内部任务：B站延迟 (使用 httpx) ----
         def task_bili():
             nonlocal result
             try:
-                start = time.monotonic()
-                resp = requests.get(
-                    self.BILI_URL,
-                    proxies=proxies,
-                    timeout=self.timeout,
-                    headers=self.BILI_HEADERS,
-                )
-                elapsed = round((time.monotonic() - start) * 1000, 2)
-                if resp.status_code == 200:
-                    result["status"] = "success"
-                else:
-                    result["status"] = "partial"
-                    result["error"] = f"B站连接失败 HTTP {resp.status_code}"
-                result["response_time"] = elapsed
-            except requests.Timeout:
+                client_kwargs: dict[str, Any] = {
+                    "timeout": httpx.Timeout(self.timeout),
+                }
+                if proxy_for_conn != "none":
+                    # httpx 原生支持 socks5:// 带认证
+                    client_kwargs["proxy"] = proxy_for_conn
+
+                with httpx.Client(**client_kwargs) as client:
+                    start = time.monotonic()
+                    resp = client.get(self.BILI_URL, headers=self.BILI_HEADERS)
+                    elapsed = round((time.monotonic() - start) * 1000, 2)
+                    if resp.status_code == 200:
+                        result["status"] = "success"
+                    else:
+                        result["status"] = "partial"
+                        result["error"] = f"B站连接失败 HTTP {resp.status_code}"
+                    result["response_time"] = elapsed
+            except httpx.TimeoutException:
                 result["error"] = f"连接超时 (>{self.timeout}s)"
-            except requests.exceptions.ProxyError:
+            except httpx.ProxyError:
                 result["error"] = "代理服务器错误或无法连接"
-            except requests.ConnectionError as e:
-                result["error"] = "代理连接失败" if "proxy" in str(e).lower() else "网络连接失败"
+            except httpx.ConnectError as e:
+                err_str = str(e).lower()
+                if "proxy" in err_str:
+                    result["error"] = "代理连接失败"
+                else:
+                    result["error"] = "网络连接失败"
             except Exception as e:
                 result["error"] = f"未知错误: {e}"
 
-        # ---- 内部任务：出口 IP ----
+        # ---- 内部任务：出口 IP (使用 httpx) ----
         def task_ip():
             nonlocal result
+            client_kwargs: dict[str, Any] = {
+                "timeout": httpx.Timeout(self.ip_timeout),
+            }
+            if proxy_for_conn != "none":
+                client_kwargs["proxy"] = proxy_for_conn
+
             # httpbin.org 最轻量，优先用
             try:
-                resp = requests.get(
-                    "https://httpbin.org/ip",
-                    proxies=proxies,
-                    timeout=self.ip_timeout,
-                    headers={"User-Agent": "curl/8.0"},
-                )
-                if resp.status_code == 200:
-                    ip_raw = resp.json().get("origin", "")
-                    result["ip_info"] = ip_raw
-                    return
+                with httpx.Client(**client_kwargs) as client:
+                    resp = client.get(
+                        "https://httpbin.org/ip",
+                        headers={"User-Agent": "curl/8.0"},
+                    )
+                    if resp.status_code == 200:
+                        ip_raw = resp.json().get("origin", "")
+                        result["ip_info"] = ip_raw
+                        return
             except Exception:
                 pass
 
             # fallback: ip-api.com（带位置/ISP 信息）
             try:
-                resp = requests.get(
-                    "http://ip-api.com/json/",
-                    proxies=proxies,
-                    timeout=self.ip_timeout,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    ip = data.get("query", "未知")
-                    parts = [ip]
-                    if data.get("city"):
-                        parts.append(data["city"])
-                    if data.get("isp") and data["isp"] not in ("", ip):
-                        parts.append(data["isp"])
-                    result["ip_info"] = " ({})".format(", ".join(parts[1:])) if len(parts) > 1 else ip
-                    return
+                with httpx.Client(**client_kwargs) as client:
+                    resp = client.get("http://ip-api.com/json/")
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        ip = data.get("query", "未知")
+                        parts = [ip]
+                        if data.get("city"):
+                            parts.append(data["city"])
+                        if data.get("isp") and data["isp"] not in ("", ip):
+                            parts.append(data["isp"])
+                        result["ip_info"] = " ({})".format(", ".join(parts[1:])) if len(parts) > 1 else ip
+                        return
             except Exception:
                 pass
 

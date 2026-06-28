@@ -57,6 +57,9 @@ def go_settings_tab(header_ui):
     def get_proxy_api_url():
         return ConfigDB.get("proxyApiUrl") or ""
 
+    def get_proxy_api_format():
+        return str(ConfigDB.get("proxyApiFormat") or "json").lower()
+
     def get_proxy_api_protocol():
         protocol = str(ConfigDB.get("proxyApiProtocol") or "http").lower()
         if protocol in {"socks", "socks5"}:
@@ -97,17 +100,19 @@ def go_settings_tab(header_ui):
     def show_proxy_test_loading():
         return gr.update(value="正在测试代理连通性，请稍候...", visible=True)
 
-    def fetch_proxy_from_api(api_url, protocol, username, password):
+    def fetch_proxy_from_api(api_url, protocol, username, password, format_type):
         try:
             from util.proxy.ProxyApiProvider import fetch_proxy_api
 
             protocol = _normalize_api_protocol(str(protocol or "http"))
             username = str(username or "").strip()
             password = str(password or "").strip()
+            format_type = str(format_type or "json").strip().lower()
             ConfigDB.insert("proxyApiUrl", str(api_url or "").strip())
             ConfigDB.insert("proxyApiProtocol", protocol)
             ConfigDB.insert("proxyApiUsername", username)
             ConfigDB.insert("proxyApiPassword", password)
+            ConfigDB.insert("proxyApiFormat", format_type)
             count = ConfigDB.get_as_int("queueConcurrencyLimit", 0)
             if count <= 0:
                 count = max(
@@ -116,6 +121,7 @@ def go_settings_tab(header_ui):
             result = fetch_proxy_api(
                 api_url, count=count, protocol=protocol,
                 username=username, password=password,
+                format_type=format_type,
             )
             ConfigDB.insert("https_proxy", ",".join(result.proxies))
             gr.Info(f"已从代理 API 获取 {len(result.proxies)} 个代理。")
@@ -128,20 +134,23 @@ def go_settings_tab(header_ui):
                 value=f"❌ 获取代理失败: {str(e)}", visible=True
             )
 
-    def save_proxy_api_config(api_url, protocol, username, password):
+    def save_proxy_api_config(api_url, protocol, username, password, format_type):
         protocol = _normalize_api_protocol(str(protocol or "http"))
         username = str(username or "").strip()
         password = str(password or "").strip()
+        format_type = str(format_type or "json").strip().lower()
         ConfigDB.insert("proxyApiUrl", str(api_url or "").strip())
         ConfigDB.insert("proxyApiProtocol", protocol)
         ConfigDB.insert("proxyApiUsername", username)
         ConfigDB.insert("proxyApiPassword", password)
+        ConfigDB.insert("proxyApiFormat", format_type)
         gr.Info("代理 API 配置已保存。")
         return (
             gr.update(value=ConfigDB.get("proxyApiUrl") or ""),
             gr.update(value=protocol),
             gr.update(value=username),
             gr.update(value=password),
+            gr.update(value=format_type),
         )
 
     def inner_input_serverchan(x):
@@ -254,6 +263,21 @@ def go_settings_tab(header_ui):
     def update_use_local_token(value):
         ConfigDB.insert("useLocalToken", value)
         return gr.update(value=ConfigDB.get("useLocalToken"))
+
+    # ── 防风控 handler ──
+    def _toggle_bool_config(key: str, default: bool):
+        def fn(value):
+            ConfigDB.insert(key, value)
+            return gr.update(value=ConfigDB.get_as_bool(key, default))
+        return fn
+
+    update_request_jitter = _toggle_bool_config("requestJitterEnabled", True)
+    update_rate_limiting = _toggle_bool_config("rateLimitingEnabled", True)
+    update_proxy_switch = _toggle_bool_config("proxySwitchEnabled", True)
+    update_create_retry_enabled = _toggle_bool_config("createRetryEnabled", True)
+    update_prewarm_enabled = _toggle_bool_config("prewarmEnabled", True)
+    update_prepare_backoff_enabled = _toggle_bool_config("prepareBackoffEnabled", True)
+    update_show_token_config = _toggle_bool_config("showToken", True)
 
     def update_proxy_assignment_strategy(value):
         ConfigDB.insert("proxyAssignmentStrategy", value)
@@ -451,6 +475,18 @@ def go_settings_tab(header_ui):
                                 type="password",
                                 value=get_proxy_api_password(),
                             )
+                    proxy_api_format_ui = gr.Dropdown(
+                        label="响应格式",
+                        choices=[
+                            ("JSON（标准代理 API）", "json"),
+                            ("纯文本（每行一个完整 URL）", "plain"),
+                        ],
+                        value=get_proxy_api_format(),
+                        interactive=True,
+                        allow_custom_value=False,
+                        filterable=False,
+                        info="JSON：程序自动解析结果中的 IP/端口。纯文本：每行一个完整代理 URL（如 socks5://user:pass@host:port），适合 Nexip 等来源。",
+                    )
                     with gr.Row(elem_classes="btb-inline-actions"):
                         save_proxy_api_btn = gr.Button(
                             "保存 API 配置",
@@ -751,6 +787,179 @@ def go_settings_tab(header_ui):
                         info="请求返回 HTTP 429 后，等待多久再继续后续流程。默认 100ms。",
                     )
 
+            with gr.Tab("防风控"):
+                with gr.Column(elem_classes="btb-card btb-layout-card"):
+                    gr.Markdown("### 防风控策略开关")
+                    gr.Markdown(
+                        "以下所有防风控策略**默认全部开启**，关闭对应开关即可禁用相应策略。"
+                    )
+
+                    # ── 请求间隔抖动 ──
+                    gr.Markdown("---")
+                    gr.Markdown("#### 📊 请求间隔（防频率限制）")
+                    request_jitter_enabled_ui = gr.Checkbox(
+                        label="请求间隔叠加±30%随机抖动",
+                        value=ConfigDB.get_as_bool("requestJitterEnabled", True),
+                        info="开启后请求间隔会被随机±30%偏移，使行为更接近人类。默认开启。",
+                    )
+                    interval_ui = gr.Number(
+                        label="请求间隔（毫秒）",
+                        value=int(
+                            buy_defaults.interval or DEFAULT_REQUEST_INTERVAL
+                        ),
+                        minimum=1,
+                        step=1,
+                        info="两次创建订单请求之间的基础间隔。",
+                    )
+
+                    # ── 429/速率限制处理 ──
+                    gr.Markdown("---")
+                    gr.Markdown("#### 🛡️ 速率限制处理")
+                    rate_limiting_enabled_ui = gr.Checkbox(
+                        label="启用 HTTP 429 退避",
+                        value=ConfigDB.get_as_bool("rateLimitingEnabled", True),
+                        info="收到 429 后等待一段时间再重试。默认开启。",
+                    )
+                    rate_limit_delay_sub_ui = gr.Number(
+                        label="429 退避基数（毫秒）",
+                        value=buy_defaults.rate_limit_delay_ms or DEFAULT_RATE_LIMIT_DELAY_MS,
+                        minimum=0,
+                        step=1,
+                        info="遇到 429 后等待的基数时间，叠加 ±30% 抖动。",
+                    )
+
+                    # ── 代理策略 ──
+                    gr.Markdown("---")
+                    gr.Markdown("#### 🌐 代理切换与冷却")
+                    proxy_switch_enabled_ui = gr.Checkbox(
+                        label="启用代理自动切换",
+                        value=ConfigDB.get_as_bool("proxySwitchEnabled", True),
+                        info="代理失败后自动切换到下一个可用代理。默认开启。",
+                    )
+                    proxy_max_failures_ui = gr.Number(
+                        label="单代理最大连续失败次数",
+                        value=(
+                            buy_defaults.proxy_max_consecutive_failures
+                            or DEFAULT_PROXY_MAX_CONSECUTIVE_FAILURES
+                        ),
+                        minimum=1,
+                        step=1,
+                        info="同一代理短时间内连续失败多少次后进入冷却。",
+                    )
+                    proxy_cooldown_sub_ui = gr.Number(
+                        label="代理冷却时间（秒）",
+                        value=(
+                            buy_defaults.proxy_cooldown_seconds
+                            or DEFAULT_PROXY_COOLDOWN_SECONDS
+                        ),
+                        minimum=1,
+                        step=1,
+                        info="代理进入冷却后多久恢复可用。",
+                    )
+                    proxy_backoff_sub_ui = gr.Number(
+                        label="全池冷却后休眠上限（秒）",
+                        value=(
+                            buy_defaults.proxy_backoff_max_seconds
+                            or DEFAULT_PROXY_BACKOFF_MAX_SECONDS
+                        ),
+                        minimum=1,
+                        step=1,
+                        info="所有代理暂时不可用时，程序退避休眠的最大时长。",
+                    )
+
+                    # ── 重试策略 ──
+                    gr.Markdown("---")
+                    gr.Markdown("#### 🔄 创建订单重试")
+                    create_retry_enabled_ui = gr.Checkbox(
+                        label="启用创建订单重试",
+                        value=ConfigDB.get_as_bool("createRetryEnabled", True),
+                        info="创建订单失败后自动重试。默认开启。",
+                    )
+                    create_retry_sub_ui = gr.Number(
+                        label="创建订单重试次数",
+                        value=(
+                            buy_defaults.create_retry_limit
+                            or DEFAULT_CREATE_RETRY_LIMIT
+                        ),
+                        minimum=1,
+                        step=1,
+                    )
+                    batch_size_sub_ui = gr.Number(
+                        label="每次准备后尝试抢票次数",
+                        value=(
+                            buy_defaults.create_request_batch_size
+                            or DEFAULT_CREATE_REQUEST_BATCH_SIZE
+                        ),
+                        minimum=1,
+                        step=1,
+                    )
+
+                    # ── 预热策略 ──
+                    gr.Markdown("---")
+                    gr.Markdown("#### 🔥 连接预热")
+                    prewarm_enabled_ui = gr.Checkbox(
+                        label="启用 H2 连接预热",
+                        value=ConfigDB.get_as_bool("prewarmEnabled", True),
+                        info="启动时预先建立 H2 连接，减少首次请求延迟。默认开启。",
+                    )
+                    refresh_interval_min_ui = gr.Number(
+                        label="项目详情复检最小间隔（create 次数）",
+                        value=(
+                            buy_defaults.refresh_interval_min_count
+                        ),
+                        minimum=1,
+                        step=1,
+                        info="每 N 次 create 后主动复检项目详情，保持 token 新鲜。",
+                    )
+                    refresh_interval_max_ui = gr.Number(
+                        label="项目详情复检最大间隔（create 次数）",
+                        value=(
+                            buy_defaults.refresh_interval_max_count
+                        ),
+                        minimum=1,
+                        step=1,
+                    )
+
+                    # ── 准备订单退避 ──
+                    gr.Markdown("---")
+                    gr.Markdown("#### 📝 准备订单退避")
+                    prepare_retry_enabled_ui = gr.Checkbox(
+                        label="启用准备订单退避",
+                        value=ConfigDB.get_as_bool("prepareBackoffEnabled", True),
+                        info="准备订单失败后指数退避重试。默认开启。",
+                    )
+                    prepare_retry_limit_ui = gr.Number(
+                        label="准备订单最大重试次数",
+                        value=(
+                            buy_defaults.prepare_max_retries
+                        ),
+                        minimum=1,
+                        step=1,
+                    )
+                    prepare_backoff_base_ui = gr.Number(
+                        label="准备订单退避基数（毫秒）",
+                        value=(
+                            buy_defaults.prepare_backoff_base_ms
+                        ),
+                        minimum=100,
+                        step=100,
+                        info="退避基时，每次失败翻倍（指数退避）。",
+                    )
+
+                    # ── 本地 Token ──
+                    gr.Markdown("---")
+                    gr.Markdown("#### 🔐 Token 策略")
+                    use_local_token_sub_ui = gr.Checkbox(
+                        label="使用本地 Token（非热项目时）",
+                        value=ConfigDB.get_as_bool("useLocalToken", False),
+                        info="默认关闭。开启后非 hotproject 直接使用本地生成 token。",
+                    )
+                    show_token_enabled_ui = gr.Checkbox(
+                        label="在日志中显示 Token",
+                        value=ConfigDB.get_as_bool("showToken", True),
+                        info="调试用，日志中打印 token 信息。默认开启。",
+                    )
+
     save_proxy_btn.click(
         fn=input_https_proxy, inputs=https_proxy_ui, outputs=https_proxy_ui
     )
@@ -765,12 +974,12 @@ def go_settings_tab(header_ui):
     )
     save_proxy_api_btn.click(
         fn=save_proxy_api_config,
-        inputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui],
-        outputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui],
+        inputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui, proxy_api_format_ui],
+        outputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui, proxy_api_format_ui],
     )
     fetch_proxy_api_btn.click(
         fn=fetch_proxy_from_api,
-        inputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui],
+        inputs=[proxy_api_url_ui, proxy_api_protocol_ui, proxy_api_username_ui, proxy_api_password_ui, proxy_api_format_ui],
         outputs=[https_proxy_ui, proxy_api_result_ui],
     )
 
@@ -895,6 +1104,60 @@ def go_settings_tab(header_ui):
         rate_limit_delay_ms_ui,
         update_rate_limit_delay_ms,
     )
+
+    # ── 防风控 sub-tab 事件绑定 ──
+    request_jitter_enabled_ui.change(
+        fn=update_request_jitter,
+        inputs=request_jitter_enabled_ui,
+        outputs=request_jitter_enabled_ui,
+    )
+    rate_limiting_enabled_ui.change(
+        fn=update_rate_limiting,
+        inputs=rate_limiting_enabled_ui,
+        outputs=rate_limiting_enabled_ui,
+    )
+    proxy_switch_enabled_ui.change(
+        fn=update_proxy_switch,
+        inputs=proxy_switch_enabled_ui,
+        outputs=proxy_switch_enabled_ui,
+    )
+    create_retry_enabled_ui.change(
+        fn=update_create_retry_enabled,
+        inputs=create_retry_enabled_ui,
+        outputs=create_retry_enabled_ui,
+    )
+    prewarm_enabled_ui.change(
+        fn=update_prewarm_enabled,
+        inputs=prewarm_enabled_ui,
+        outputs=prewarm_enabled_ui,
+    )
+    prepare_retry_enabled_ui.change(
+        fn=update_prepare_backoff_enabled,
+        inputs=prepare_retry_enabled_ui,
+        outputs=prepare_retry_enabled_ui,
+    )
+    show_token_enabled_ui.change(
+        fn=update_show_token_config,
+        inputs=show_token_enabled_ui,
+        outputs=show_token_enabled_ui,
+    )
+    use_local_token_sub_ui.change(
+        fn=update_use_local_token,
+        inputs=use_local_token_sub_ui,
+        outputs=use_local_token_sub_ui,
+    )
+    _bind_number_commit(interval_ui, update_request_interval)
+    _bind_number_commit(rate_limit_delay_sub_ui, update_rate_limit_delay_ms)
+    _bind_number_commit(proxy_max_failures_ui, update_proxy_max_consecutive_failures)
+    _bind_number_commit(proxy_cooldown_sub_ui, update_proxy_cooldown_seconds)
+    _bind_number_commit(proxy_backoff_sub_ui, update_proxy_backoff_max_seconds)
+    _bind_number_commit(create_retry_sub_ui, update_create_retry_limit)
+    _bind_number_commit(batch_size_sub_ui, update_create_request_batch_size)
+    _bind_number_commit(refresh_interval_min_ui, lambda v: _update_positive_int_config("refreshIntervalMinCount", v, DEFAULT_CREATE_RETRY_LIMIT))
+    _bind_number_commit(refresh_interval_max_ui, lambda v: _update_positive_int_config("refreshIntervalMaxCount", v, DEFAULT_CREATE_RETRY_LIMIT))
+    _bind_number_commit(prepare_retry_limit_ui, lambda v: _update_positive_int_config("prepareMaxRetries", v, 100))
+    _bind_number_commit(prepare_backoff_base_ui, lambda v: _update_positive_int_config("prepareBackoffBaseMs", v, 1000))
+
     test_audio_button.click(
         fn=test_terminal_audio,
         inputs=[],
@@ -920,6 +1183,7 @@ def go_settings_tab(header_ui):
             gr.update(value=get_proxy_api_protocol()),
             gr.update(value=get_proxy_api_username()),
             gr.update(value=get_proxy_api_password()),
+            gr.update(value=get_proxy_api_format()),
             gr.update(value=ConfigDB.get("audioPath") or None),
             gr.update(value=ConfigDB.get("serverchanKey") or ""),
             gr.update(value=ConfigDB.get("serverchan3ApiUrl") or ""),
@@ -957,6 +1221,26 @@ def go_settings_tab(header_ui):
             gr.update(value=buy_defaults.proxy_cooldown_seconds),
             gr.update(value=buy_defaults.proxy_backoff_max_seconds),
             gr.update(value=buy_defaults.notifier_config.notify_proxy_exhausted),
+            # 防风控组件
+            gr.update(value=ConfigDB.get_as_bool("requestJitterEnabled", True)),
+            gr.update(value=int(buy_defaults.interval or DEFAULT_REQUEST_INTERVAL)),
+            gr.update(value=ConfigDB.get_as_bool("rateLimitingEnabled", True)),
+            gr.update(value=buy_defaults.rate_limit_delay_ms or DEFAULT_RATE_LIMIT_DELAY_MS),
+            gr.update(value=ConfigDB.get_as_bool("proxySwitchEnabled", True)),
+            gr.update(value=buy_defaults.proxy_max_consecutive_failures or DEFAULT_PROXY_MAX_CONSECUTIVE_FAILURES),
+            gr.update(value=buy_defaults.proxy_cooldown_seconds or DEFAULT_PROXY_COOLDOWN_SECONDS),
+            gr.update(value=buy_defaults.proxy_backoff_max_seconds or DEFAULT_PROXY_BACKOFF_MAX_SECONDS),
+            gr.update(value=ConfigDB.get_as_bool("createRetryEnabled", True)),
+            gr.update(value=buy_defaults.create_retry_limit or DEFAULT_CREATE_RETRY_LIMIT),
+            gr.update(value=buy_defaults.create_request_batch_size or DEFAULT_CREATE_REQUEST_BATCH_SIZE),
+            gr.update(value=ConfigDB.get_as_bool("prewarmEnabled", True)),
+            gr.update(value=buy_defaults.refresh_interval_min_count),
+            gr.update(value=buy_defaults.refresh_interval_max_count),
+            gr.update(value=ConfigDB.get_as_bool("prepareBackoffEnabled", True)),
+            gr.update(value=buy_defaults.prepare_max_retries),
+            gr.update(value=buy_defaults.prepare_backoff_base_ms),
+            gr.update(value=ConfigDB.get_as_bool("useLocalToken", False)),
+            gr.update(value=ConfigDB.get_as_bool("showToken", True)),
         ]
 
     return load_go_settings_configs, [
@@ -965,6 +1249,7 @@ def go_settings_tab(header_ui):
         proxy_api_protocol_ui,
         proxy_api_username_ui,
         proxy_api_password_ui,
+        proxy_api_format_ui,
         audio_path_ui,
         serverchan_ui,
         serverchan3_ui,
@@ -995,4 +1280,24 @@ def go_settings_tab(header_ui):
         proxy_cooldown_seconds_ui,
         proxy_backoff_max_seconds_ui,
         notify_proxy_exhausted_ui,
+        # 防风控组件
+        request_jitter_enabled_ui,
+        interval_ui,
+        rate_limiting_enabled_ui,
+        rate_limit_delay_sub_ui,
+        proxy_switch_enabled_ui,
+        proxy_max_failures_ui,
+        proxy_cooldown_sub_ui,
+        proxy_backoff_sub_ui,
+        create_retry_enabled_ui,
+        create_retry_sub_ui,
+        batch_size_sub_ui,
+        prewarm_enabled_ui,
+        refresh_interval_min_ui,
+        refresh_interval_max_ui,
+        prepare_retry_enabled_ui,
+        prepare_retry_limit_ui,
+        prepare_backoff_base_ui,
+        use_local_token_sub_ui,
+        show_token_enabled_ui,
     ]
